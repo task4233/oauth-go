@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/task4233/oauth-go/common"
+	"github.com/task4233/oauth-go/infra/repository"
 	"github.com/task4233/oauth-go/logger"
 	"golang.org/x/exp/slices"
 	"golang.org/x/exp/slog"
@@ -35,21 +36,25 @@ type Code struct {
 // ref: https://datatracker.ietf.org/doc/html/rfc6749
 type Authorization struct {
 	AuthorizationEndpoint string
-	// TODO: move to infra layer
-	kvs           []map[string]string
-	clients       map[string]*Client
-	codes         map[string]*Code
-	requests      map[string]url.Values
-	srv           http.Server
-	TokenEndpoint string
-	Log           *slog.Logger
+	kvs                   repository.KVS
+	clients               map[string]*Client
+	codes                 map[string]*Code
+	requests              map[string]url.Values
+	srv                   http.Server
+	TokenEndpoint         string
+	Log                   *slog.Logger
 }
 
-func NewAuthorization(ctx context.Context, port int, clients []*Client) Authorization {
+func NewAuthorization(
+	ctx context.Context,
+	port int,
+	clients []*Client,
+	kvs repository.KVS,
+) Authorization {
 	a := Authorization{
 		Log: logger.FromContext(ctx),
 	}
-	a.kvs = make([]map[string]string, 0)
+	a.kvs = kvs
 	a.clients = map[string]*Client{}
 	for _, c := range clients {
 		a.clients[c.ClientID] = c
@@ -278,7 +283,7 @@ func (s *Authorization) token(w http.ResponseWriter, r *http.Request) {
 			"client_id":    clientID,
 			"scope":        cScope,
 		}
-		s.kvs = append(s.kvs, vv)
+		s.kvs.Set(accessToken, vv)
 
 		tokenResponse := map[string]string{
 			"access_token": accessToken,
