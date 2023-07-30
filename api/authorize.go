@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -62,6 +63,7 @@ func NewAuthorization(
 	a.srv.Addr = fmt.Sprintf(":%d", port)
 	a.srv.Handler = a.route()
 	a.requests = map[string]url.Values{}
+	a.codes = map[string]*Code{}
 
 	return a
 }
@@ -82,6 +84,7 @@ func (s *Authorization) route() http.Handler {
 
 type AuthorizeResponse struct {
 	Client Client `json:"client"`
+	State  string `json:"state"`
 	ReqID  string `json:"req_id"`
 	Scope  string `json:"scope"`
 }
@@ -134,36 +137,39 @@ func (s *Authorization) authorize(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(AuthorizeResponse{
 		Client: *client,
+		State:  r.Form.Get("state"),
 		ReqID:  reqID,
 		Scope:  client.Scope,
 	})
+
 }
 
 func (s *Authorization) approve(w http.ResponseWriter, r *http.Request) {
-	s.Log.InfoContext(r.Context(), "GET /approve is called")
+	ctx := r.Context()
+	s.Log.InfoContext(ctx, "GET /approve is called")
 
 	reqID := r.URL.Query().Get("req_id")
 	req, ok := s.requests[reqID]
 	if !ok {
 		msg := fmt.Sprintf("no matched request with req_id: %s", reqID)
-		s.Log.WarnContext(r.Context(), msg)
+		s.Log.WarnContext(ctx, msg)
 		w.WriteHeader(http.StatusBadRequest)
 		fmt.Fprint(w, msg)
 		return
 	}
 
 	redirectURI := r.URL.Query().Get("redirect_uri")
-	if r.FormValue("approve") != "true" {
-		redirectURI, err := constructURIWithQueries(redirectURI, map[string]string{"error": "access_denied"})
-		if err != nil {
-			s.Log.WarnContext(r.Context(), err.Error())
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, err.Error())
-			return
-		}
-		http.Redirect(w, r, redirectURI, http.StatusFound)
-		return
-	}
+	// if r.FormValue("approve") != "true" {
+	// 	redirectURI, err := constructURIWithQueries(redirectURI, map[string]string{"error": "access_denied"})
+	// 	if err != nil {
+	// 		s.Log.WarnContext(ctx, err.Error())
+	// 		w.WriteHeader(http.StatusBadRequest)
+	// 		fmt.Fprint(w, err.Error())
+	// 		return
+	// 	}
+	// 	http.Redirect(w, r, redirectURI, http.StatusFound)
+	// 	return
+	// }
 
 	switch req.Get("response_type") {
 	case "code":
@@ -177,7 +183,7 @@ func (s *Authorization) approve(w http.ResponseWriter, r *http.Request) {
 		if !common.AreTwoUnorderedSlicesSame(cScope, scope) {
 			redirectURI, err := constructURIWithQueries(redirectURI, map[string]string{"error": "invalid_scope"})
 			if err != nil {
-				s.Log.WarnContext(r.Context(), err.Error())
+				s.Log.WarnContext(ctx, err.Error())
 				w.WriteHeader(http.StatusBadRequest)
 				fmt.Fprint(w, err.Error())
 				return
@@ -198,7 +204,7 @@ func (s *Authorization) approve(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			redirectURI, err = constructURIWithQueries(redirectURI, map[string]string{"error": "invalid_scope"})
-			s.Log.WarnContext(r.Context(), err.Error())
+			s.Log.WarnContext(ctx, err.Error())
 			http.Redirect(w, r, redirectURI, http.StatusFound)
 			return
 		}
@@ -206,7 +212,7 @@ func (s *Authorization) approve(w http.ResponseWriter, r *http.Request) {
 	default:
 		redirectURI, err := constructURIWithQueries(redirectURI, map[string]string{"error": "unsupported_response_type"})
 		if err != nil {
-			s.Log.WarnContext(r.Context(), err.Error())
+			s.Log.WarnContext(ctx, err.Error())
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprint(w, err.Error())
 			return
@@ -290,6 +296,9 @@ func (s *Authorization) token(w http.ResponseWriter, r *http.Request) {
 			"token_type":   "Bearer",
 			"scope":        cScope,
 		}
+		s.Log.InfoContext(r.Context(), fmt.Sprintf("access token is issued: %#v", tokenResponse))
+
+		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(tokenResponse)
 	case "refresh_token":
 		panic("implement refresh token grant type")
@@ -316,15 +325,18 @@ func constructURIWithQueries(uri string, queries map[string]string) (string, err
 }
 
 func parseBasicAuth(auth string) (string, string, error) {
-	clientCredentials := strings.Split(strings.TrimPrefix(strings.ToLower(auth), "basic "), ":")
-	clientID, err := base64.StdEncoding.DecodeString(clientCredentials[0])
+	if !strings.HasPrefix(strings.ToLower(auth), "basic ") {
+		return "", "", fmt.Errorf("auth header is not basic: %s", auth)
+	}
+	decodedAuthContent, err := base64.StdEncoding.DecodeString(auth[len("basic "):])
 	if err != nil {
 		return "", "", fmt.Errorf("failed base64.StdEncoding.DecodeString: %w", err)
 	}
-	clientSecret, err := base64.StdEncoding.DecodeString(clientCredentials[1])
-	if err != nil {
-		return "", "", fmt.Errorf("failed base64.StdEncoding.DecodeString: %w", err)
+	log.Printf("decoded: %v, %s\n", string(decodedAuthContent), auth)
+	clientCredentials := strings.Split(string(decodedAuthContent), ":")
+	if len(clientCredentials) != 2 {
+		return "", "", fmt.Errorf("basic auth must have two parts: %v", clientCredentials)
 	}
 
-	return string(clientID), string(clientSecret), nil
+	return clientCredentials[0], clientCredentials[1], nil
 }
