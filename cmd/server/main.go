@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/task4233/oauth-go/api"
 	"github.com/task4233/oauth-go/infra"
@@ -32,7 +34,7 @@ func main() {
 
 	// running authorization server
 	go func() {
-		authorization.Log.InfoContext(ctx, "start listening authorization server on %d", authorizationPort)
+		authorization.Log.InfoContext(ctx, fmt.Sprintf("start listening authorization server on %d", authorizationPort))
 		if err := authorization.Run(ctx); err != nil {
 			authorization.Log.WarnContext(ctx, "failed authorization.Run: %v", err.Error())
 		}
@@ -40,10 +42,12 @@ func main() {
 
 	// running resource server
 	go func() {
-		resource.Log.InfoContext(ctx, "start listening resource server on %d", resourcePort)
+		resource.Log.InfoContext(ctx, fmt.Sprintf("start listening resource server on %d", resourcePort))
 		if err := resource.Run(ctx); err != nil {
 			resource.Log.WarnContext(ctx, "failed resource.Run: %v", err.Error())
 		}
 	}()
+
+	time.Sleep(5 * time.Minute)
 
 }

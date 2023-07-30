@@ -104,7 +104,7 @@ func (s *Authorization) authorize(w http.ResponseWriter, r *http.Request) {
 
 	// check redirect_uri
 	redirectURI := r.URL.Query().Get("redirect_uri")
-	if slices.Contains(client.RedirectURI, redirectURI) {
+	if !slices.Contains(client.RedirectURI, redirectURI) {
 		msg := fmt.Sprintf("redirect_uri is invalid: %s, expected: %#v", redirectURI, client.RedirectURI)
 		s.Log.WarnContext(r.Context(), msg)
 		w.WriteHeader(http.StatusBadRequest)
