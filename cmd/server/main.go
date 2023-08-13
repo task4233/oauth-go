@@ -2,52 +2,36 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"time"
 
-	"github.com/task4233/oauth-go/api"
-	"github.com/task4233/oauth-go/infra"
+	"github.com/task4233/oauth/api"
+	"github.com/task4233/oauth/logger"
 )
 
 const (
-	authorizationPort = 9001
-	resourcePort      = 9002
+	authorizationServerPort = 8080
+	resourceServerPort      = 9090
 )
 
 func main() {
 	ctx := context.Background()
+	log := logger.FromContext(ctx)
 
-	clients := []*api.Client{{
-		ClientID:     "oauth-client-id-1",
-		ClientSecret: "oauth-client-secret-1",
-		RedirectURI:  []string{"http://localhost:9000/callback"},
-		Scope:        "read write",
-	}}
-	resourceData := map[string]string{
-		"name":        "protected resource",
-		"description": "this data is protected by OAuth2.0",
-	}
+	authServer := api.NewAuthorizationServer(authorizationServerPort)
+	resourceServer := api.NewResourceServer(resourceServerPort)
 
-	kvs := infra.NewKVS()
-	authorization := api.NewAuthorization(ctx, authorizationPort, clients, kvs)
-	resource := api.NewResource(ctx, resourcePort, kvs, resourceData)
-
-	// running authorization server
+	// run authorization server
 	go func() {
-		authorization.Log.InfoContext(ctx, fmt.Sprintf("start listening authorization server on %d", authorizationPort))
-		if err := authorization.Run(ctx); err != nil {
-			authorization.Log.WarnContext(ctx, "failed authorization.Run: %v", err.Error())
+		if err := authServer.Run(); err != nil {
+			log.Error("failed to run authorization server: %v", err)
+			return
 		}
 	}()
 
-	// running resource server
+	// run resource server
 	go func() {
-		resource.Log.InfoContext(ctx, fmt.Sprintf("start listening resource server on %d", resourcePort))
-		if err := resource.Run(ctx); err != nil {
-			resource.Log.WarnContext(ctx, "failed resource.Run: %v", err.Error())
+		if err := resourceServer.Run(); err != nil {
+			log.Error("failed to run resource server: %v", err)
+			return
 		}
 	}()
-
-	time.Sleep(5 * time.Minute)
-
 }
