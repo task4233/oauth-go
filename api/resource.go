@@ -1,8 +1,11 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+
+	"github.com/task4233/oauth/infra/repository"
 )
 
 // resourceServer is a server for hosting protected resources, capable of accepting
@@ -12,7 +15,7 @@ type resourceServer struct {
 	srv  http.Server
 }
 
-func NewResourceServer(port int) Server {
+func NewResourceServer(ctx context.Context, port int, kvs repository.KVS) Server {
 	s := &resourceServer{port: port}
 	s.srv.Addr = fmt.Sprintf(":%d", port)
 	s.srv.Handler = s.route()
@@ -20,9 +23,11 @@ func NewResourceServer(port int) Server {
 }
 
 func (s *resourceServer) Run() error {
-	panic("implement me")
+	return s.srv.ListenAndServe()
 }
 
 func (a *resourceServer) route() http.Handler {
-	panic("implement me")
+	h := http.NewServeMux()
+
+	return h
 }
