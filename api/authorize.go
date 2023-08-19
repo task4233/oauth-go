@@ -28,6 +28,12 @@ type AuthorizeResponse struct {
 	Scope  string `json:"scope"`
 }
 
+type TokenResponse struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	Scope       string `json:"scope"`
+}
+
 type code struct {
 	req    url.Values
 	scope  string
@@ -274,10 +280,10 @@ func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"access_token": accessToken,
-		"token_type":   "Bearer",
-		"scope":        c.scope,
+	json.NewEncoder(w).Encode(TokenResponse{
+		AccessToken: accessToken,
+		TokenType:   "Bearer",
+		Scope:       c.scope,
 	})
 }
 
