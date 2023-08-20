@@ -114,7 +114,7 @@ func TestAuthorize(t *testing.T) {
 	}
 }
 
-func TestAuthenticate(t *testing.T) {
+func TestApprove(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
@@ -176,7 +176,7 @@ func TestAuthenticate(t *testing.T) {
 			}
 			req.URL.RawQuery = q.Encode()
 			got := httptest.NewRecorder()
-			s.authenticate(got, req)
+			s.approve(got, req)
 
 			resp := got.Result()
 			if resp == nil {

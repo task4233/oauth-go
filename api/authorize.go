@@ -79,7 +79,7 @@ func (s *authorizationServer) route() http.Handler {
 	h := http.NewServeMux()
 
 	h.Handle("/authorize", logAdapter(http.HandlerFunc(s.authorize)))
-	h.Handle("/authenticate", logAdapter(http.HandlerFunc(s.authenticate)))
+	h.Handle("/approve", logAdapter(http.HandlerFunc(s.approve)))
 	h.Handle("/token", logAdapter(http.HandlerFunc(s.token)))
 
 	return h
@@ -138,9 +138,9 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// authenticate is for handling 6.send the information for user authentication.
+// approve is for handling 6.send the information for user authentication.
 // this method is not defined in the RFC.
-func (s *authorizationServer) authenticate(w http.ResponseWriter, r *http.Request) {
+func (s *authorizationServer) approve(w http.ResponseWriter, r *http.Request) {
 	// get query parameters
 	reqID := r.URL.Query().Get("req_id")
 	scope := r.URL.Query().Get("scope")
@@ -151,28 +151,28 @@ func (s *authorizationServer) authenticate(w http.ResponseWriter, r *http.Reques
 	// validate approve
 	req, ok := s.requests[reqID]
 	if !ok {
-		s.log.Warn("failed to authenticate: invalid req_id: %v", reqID)
+		s.log.Warn("failed to approve: invalid req_id: %v", reqID)
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
 		return
 	}
 	if scope == "" {
-		s.log.Warn("failed to authenticate: scope is empty: %v", scope)
+		s.log.Warn("failed to approve: scope is empty: %v", scope)
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
 		return
 	}
 	if userID == "" {
-		s.log.Warn("failed to authenticate: %v", userID)
+		s.log.Warn("failed to approve: %v", userID)
 		s.handleError(w, r, map[string]string{
 			"error": accessDenied.String(),
 		})
 		return
 	}
 	if redirectURI == "" {
-		s.log.Warn("failed to authenticate: redirect_uri is empty: %v", redirectURI)
+		s.log.Warn("failed to approve: redirect_uri is empty: %v", redirectURI)
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
@@ -204,7 +204,7 @@ func (s *authorizationServer) authenticate(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
-// authenticate is for handling 8.send a token issue request.
+// token is for handling 8.send a token issue request.
 func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
 	clientID, clientSecret, err := parseBasicAuth(auth)
