@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	authorizationServerPort = 8080
-	resourceServerPort      = 9090
+	authenticationServerPort = 7070
+	authorizationServerPort  = 8080
+	resourceServerPort       = 9090
 )
 
 func main() {

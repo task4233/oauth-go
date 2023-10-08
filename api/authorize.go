@@ -15,6 +15,8 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+const dummyToken = "dummy_token"
+
 type Client struct {
 	ClientID     string
 	ClientSecret string
@@ -78,9 +80,10 @@ func (s *authorizationServer) Run() error {
 func (s *authorizationServer) route() http.Handler {
 	h := http.NewServeMux()
 
-	h.Handle("/authorize", logAdapter(http.HandlerFunc(s.authorize)))
-	h.Handle("/approve", logAdapter(http.HandlerFunc(s.approve)))
-	h.Handle("/token", logAdapter(http.HandlerFunc(s.token)))
+	h.Handle("/authorize", LogAdapter(http.HandlerFunc(s.authorize)))
+	h.Handle("/approve", LogAdapter(http.HandlerFunc(s.approve)))
+	h.Handle("/authenticate", LogAdapter(http.HandlerFunc(s.authenticate)))
+	h.Handle("/token", LogAdapter(http.HandlerFunc(s.token)))
 
 	return h
 }
@@ -91,8 +94,17 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 	responseType := r.URL.Query().Get("response_type")
 	clientID := r.URL.Query().Get("client_id")
 	state := r.URL.Query().Get("state")
-	// redirectURI := r.URL.Query().Get("redirect_uri") // not used
+	redirectURI := r.URL.Query().Get("redirect_uri")
 	scope := r.URL.Query().Get("scope")
+
+	// if there's no correct authorization header, redirect to authenticate.
+	authorization := r.Header.Get("Authorization")
+	if strings.HasPrefix(authorization, "Bearer "+dummyToken+":") {
+		s.log.Error("/authorize", "msg", "failed to authenticate", "invalid token", authorization)
+		http.Redirect(w, r, "/authenticate", http.StatusFound)
+		return
+	}
+	userID := strings.TrimPrefix(authorization, "Bearer "+dummyToken+":")
 
 	// validate query parameters
 	if responseType != "code" {
@@ -103,6 +115,7 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
+
 	client, ok := s.clients[clientID]
 	if !ok {
 		s.log.Error(fmt.Sprintf("invalid client_id: %v", clientID))
@@ -128,14 +141,29 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 	reqID := uuid.New().String()
 	s.requests[reqID] = r.URL.Query()
 
-	// require user authentication
-	// in user authentication, we need just approve or deny
-	_ = json.NewEncoder(w).Encode(AuthorizeResponse{
-		Client: *client,
-		State:  state,
-		ReqID:  reqID,
-		Scope:  scope,
+	// generate code and store the code
+	c := uuid.New().String()
+	s.codes[c] = &code{
+		req:    s.requests[reqID],
+		scope:  scope,
+		userID: userID,
+	}
+
+	// redirect to redirect_uri
+	redirectURI, err = common.ConstructURLWithQueries(redirectURI, map[string]string{
+		"code":  c,
+		"state": state,
 	})
+	if err != nil {
+		s.log.Error("failed to constructURIWithQueries: %v", err)
+		s.handleError(w, r, map[string]string{
+			"error": serverError.String(),
+			"state": state,
+		})
+		return
+	}
+
+	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
 // approve is for handling 6.send the information for user authentication.
