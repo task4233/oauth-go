@@ -15,17 +15,23 @@ import (
 	"golang.org/x/exp/slog"
 )
 
-type client struct {
-	clientID     string
-	clientSecret string
-	scope        string
+type Client struct {
+	ClientID     string
+	ClientSecret string
+	Scope        string
 }
 
 type AuthorizeResponse struct {
-	Client client `json:"client"`
+	Client Client `json:"client"`
 	State  string `json:"state"`
 	ReqID  string `json:"req_id"`
 	Scope  string `json:"scope"`
+}
+
+type TokenResponse struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	Scope       string `json:"scope"`
 }
 
 type code struct {
@@ -34,24 +40,31 @@ type code struct {
 	userID string
 }
 
+var _ (Server) = (*authorizationServer)(nil)
+
 // authorizationServer is a server for issueing access tokens to the client
 // after successfully authenticating the resource owner and obtaining authorization.
 type authorizationServer struct {
 	port     int
 	srv      http.Server
 	kvs      repository.KVS
-	clients  map[string]*client
+	clients  map[string]*Client
 	requests map[string]url.Values
 	codes    map[string]*code
 	log      *slog.Logger
 }
 
-func NewAuthorizationServer(ctx context.Context, port int, kvs repository.KVS) Server {
+func NewAuthorizationServer(
+	ctx context.Context,
+	port int,
+	clients map[string]*Client,
+	kvs repository.KVS,
+) *authorizationServer {
 	s := &authorizationServer{port: port}
 	s.srv.Addr = fmt.Sprintf(":%d", port)
 	s.srv.Handler = s.route()
 	s.kvs = kvs
-	s.clients = make(map[string]*client)
+	s.clients = clients
 	s.requests = make(map[string]url.Values)
 	s.codes = make(map[string]*code)
 	s.log = logger.FromContext(ctx)
@@ -66,7 +79,7 @@ func (s *authorizationServer) route() http.Handler {
 	h := http.NewServeMux()
 
 	h.Handle("/authorize", logAdapter(http.HandlerFunc(s.authorize)))
-	h.Handle("/authenticate", logAdapter(http.HandlerFunc(s.authenticate)))
+	h.Handle("/approve", logAdapter(http.HandlerFunc(s.approve)))
 	h.Handle("/token", logAdapter(http.HandlerFunc(s.token)))
 
 	return h
@@ -83,7 +96,7 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 
 	// validate query parameters
 	if responseType != "code" {
-		s.log.Error("invalid response_type: %v", responseType)
+		s.log.Error(fmt.Sprintf("invalid response_type: %v", responseType))
 		s.handleError(w, r, map[string]string{
 			"error": unsupportedResponseType.String(),
 			"state": state,
@@ -92,7 +105,7 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 	}
 	client, ok := s.clients[clientID]
 	if !ok {
-		s.log.Error("invalid client_id: %v", clientID)
+		s.log.Error(fmt.Sprintf("invalid client_id: %v", clientID))
 		s.handleError(w, r, map[string]string{
 			"error": unauthorizedClient.String(),
 			"state": state,
@@ -103,7 +116,7 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 	// check scope
 	err := s.isValidScope(scope, client)
 	if err != nil {
-		s.log.Error("invalid scope: %v, %v", scope, err)
+		s.log.Error(fmt.Sprintf("invalid scope: %v, %v", scope, err))
 		s.handleError(w, r, map[string]string{
 			"error": invalidScope.String(),
 			"state": state,
@@ -125,9 +138,9 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// authenticate is for handling 6.send the information for user authentication.
+// approve is for handling 6.send the information for user authentication.
 // this method is not defined in the RFC.
-func (s *authorizationServer) authenticate(w http.ResponseWriter, r *http.Request) {
+func (s *authorizationServer) approve(w http.ResponseWriter, r *http.Request) {
 	// get query parameters
 	reqID := r.URL.Query().Get("req_id")
 	scope := r.URL.Query().Get("scope")
@@ -138,28 +151,28 @@ func (s *authorizationServer) authenticate(w http.ResponseWriter, r *http.Reques
 	// validate approve
 	req, ok := s.requests[reqID]
 	if !ok {
-		s.log.Warn("failed to authenticate: invalid req_id: %v", reqID)
+		s.log.Warn("failed to approve: invalid req_id: %v", reqID)
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
 		return
 	}
 	if scope == "" {
-		s.log.Warn("failed to authenticate: scope is empty: %v", scope)
+		s.log.Warn("failed to approve: scope is empty: %v", scope)
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
 		return
 	}
 	if userID == "" {
-		s.log.Warn("failed to authenticate: %v", userID)
+		s.log.Warn("failed to approve: %v", userID)
 		s.handleError(w, r, map[string]string{
 			"error": accessDenied.String(),
 		})
 		return
 	}
 	if redirectURI == "" {
-		s.log.Warn("failed to authenticate: redirect_uri is empty: %v", redirectURI)
+		s.log.Warn("failed to approve: redirect_uri is empty: %v", redirectURI)
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
@@ -191,7 +204,7 @@ func (s *authorizationServer) authenticate(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
-// authenticate is for handling 8.send a token issue request.
+// token is for handling 8.send a token issue request.
 func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
 	clientID, clientSecret, err := parseBasicAuth(auth)
@@ -242,7 +255,7 @@ func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// validate client credentials
-	if client.clientID != clientID || client.clientSecret != clientSecret {
+	if client.ClientID != clientID || client.ClientSecret != clientSecret {
 		s.log.Error("invalid client credentials: %v, %v", clientID, clientSecret)
 		s.handleError(w, r, map[string]string{
 			"error": unauthorizedClient.String(),
@@ -267,10 +280,10 @@ func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"access_token": accessToken,
-		"token_type":   "Bearer",
-		"scope":        c.scope,
+	json.NewEncoder(w).Encode(TokenResponse{
+		AccessToken: accessToken,
+		TokenType:   "Bearer",
+		Scope:       c.scope,
 	})
 }
 
@@ -286,11 +299,11 @@ func (s *authorizationServer) handleError(w http.ResponseWriter, r *http.Request
 	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
-func (s *authorizationServer) isValidScope(reqScope string, client *client) error {
+func (s *authorizationServer) isValidScope(reqScope string, client *Client) error {
 	reqScopes := strings.Split(reqScope, " ")
-	clientScopes := strings.Split(client.scope, " ") // it can be cached.
+	clientScopes := strings.Split(client.Scope, " ") // it can be cached.
 	if !common.AreTwoUnorderedSlicesSame(reqScopes, clientScopes) {
-		return fmt.Errorf("invalid scope, want: %v, req: %v", client.scope, reqScope)
+		return fmt.Errorf("invalid scope, want: %v, req: %v", client.Scope, reqScope)
 	}
 	return nil
 }

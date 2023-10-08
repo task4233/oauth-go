@@ -18,8 +18,15 @@ func main() {
 	ctx := context.Background()
 	log := logger.FromContext(ctx)
 	kvs := infra.NewKVS()
+	clients := map[string]*api.Client{
+		"test_client": {
+			ClientID:     "test_client",
+			ClientSecret: "test_client_secret",
+			Scope:        "read write",
+		},
+	}
 
-	authServer := api.NewAuthorizationServer(ctx, authorizationServerPort, kvs)
+	authServer := api.NewAuthorizationServer(ctx, authorizationServerPort, clients, kvs)
 	resourceServer := api.NewResourceServer(ctx, resourceServerPort, kvs)
 
 	wg := &sync.WaitGroup{}
