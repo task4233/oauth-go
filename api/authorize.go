@@ -108,7 +108,7 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 
 	// validate query parameters
 	if responseType != "code" {
-		s.log.Error(fmt.Sprintf("invalid response_type: %v", responseType))
+		s.log.Error("/authorize", "invalid response_type", responseType)
 		s.handleError(w, r, map[string]string{
 			"error": unsupportedResponseType.String(),
 			"state": state,
@@ -118,7 +118,7 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 
 	client, ok := s.clients[clientID]
 	if !ok {
-		s.log.Error(fmt.Sprintf("invalid client_id: %v", clientID))
+		s.log.Error("/authorize", "invalid client_id", clientID)
 		s.handleError(w, r, map[string]string{
 			"error": unauthorizedClient.String(),
 			"state": state,
@@ -129,7 +129,7 @@ func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) 
 	// check scope
 	err := s.isValidScope(scope, client)
 	if err != nil {
-		s.log.Error(fmt.Sprintf("invalid scope: %v, %v", scope, err))
+		s.log.Error("/authorize", "invalid scope", scope, "error", err)
 		s.handleError(w, r, map[string]string{
 			"error": invalidScope.String(),
 			"state": state,
@@ -179,28 +179,28 @@ func (s *authorizationServer) approve(w http.ResponseWriter, r *http.Request) {
 	// validate approve
 	req, ok := s.requests[reqID]
 	if !ok {
-		s.log.Warn("failed to approve: invalid req_id: %v", reqID)
+		s.log.Warn("/approve", "invalid req_id", reqID)
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
 		return
 	}
 	if scope == "" {
-		s.log.Warn("failed to approve: scope is empty: %v", scope)
+		s.log.Warn("/approve", "msg", "scope is empty")
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
 		return
 	}
 	if userID == "" {
-		s.log.Warn("failed to approve: %v", userID)
+		s.log.Warn("/approve", "msg", "user_id is empty")
 		s.handleError(w, r, map[string]string{
 			"error": accessDenied.String(),
 		})
 		return
 	}
 	if redirectURI == "" {
-		s.log.Warn("failed to approve: redirect_uri is empty: %v", redirectURI)
+		s.log.Warn("/approve", "msg", "redirect_uri is empty")
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
@@ -221,7 +221,7 @@ func (s *authorizationServer) approve(w http.ResponseWriter, r *http.Request) {
 		"state": state,
 	})
 	if err != nil {
-		s.log.Error("failed to constructURIWithQueries: %v", err)
+		s.log.Error("/approve", "constructURIWithQueries", err)
 		s.handleError(w, r, map[string]string{
 			"error": serverError.String(),
 			"state": state,
@@ -237,7 +237,7 @@ func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
 	clientID, clientSecret, err := parseBasicAuth(auth)
 	if err != nil {
-		s.log.Error("failed to parseBasicAuth: %v", err)
+		s.log.Error("/token", "failed to parseBasicAuth", err)
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
@@ -252,7 +252,7 @@ func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 
 	// validate query parameters
 	if grantType != "authorization_code" {
-		s.log.Error("invalid grant_type: %v", grantType)
+		s.log.Error("/token", "invalid grant_type", grantType)
 		s.handleError(w, r, map[string]string{
 			"error": unsupportedResponseType.String(),
 		})
@@ -260,14 +260,14 @@ func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 	}
 	c, ok := s.codes[code]
 	if !ok {
-		s.log.Error("invalid code: %v", code)
+		s.log.Error("/token", "invalid code", code)
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
 		return
 	}
 	if redirectURL == "" {
-		s.log.Error("invalid redirect_uri: %v", redirectURL)
+		s.log.Error("/token", "invalid redirect_uri", redirectURL)
 		s.handleError(w, r, map[string]string{
 			"error": invalidRequest.String(),
 		})
@@ -275,7 +275,7 @@ func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 	}
 	client, ok := s.clients[cID]
 	if !ok {
-		s.log.Error("invalid client_id: %v", clientID)
+		s.log.Error("/token", "invalid client_id", clientID)
 		s.handleError(w, r, map[string]string{
 			"error": unauthorizedClient.String(),
 		})
@@ -284,7 +284,7 @@ func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 
 	// validate client credentials
 	if client.ClientID != clientID || client.ClientSecret != clientSecret {
-		s.log.Error("invalid client credentials: %v, %v", clientID, clientSecret)
+		s.log.Error("/token", "msg", "invalid client credentials", "clientID", clientID, "clientSecret", clientSecret)
 		s.handleError(w, r, map[string]string{
 			"error": unauthorizedClient.String(),
 		})
@@ -300,7 +300,7 @@ func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 	}
 	err = s.kvs.Set(accessToken, vv)
 	if err != nil {
-		s.log.Error("failed to Set: %v", err)
+		s.log.Error("/token", "msg", "failed to Set", "error", err)
 		s.handleError(w, r, map[string]string{
 			"error": serverError.String(),
 		})

@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/base64"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 
@@ -18,11 +17,11 @@ type Server interface {
 func LogAdapter(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log := logger.FromContext(r.Context())
-		log.Info("[Req] %s %s\n", r.Method, r.URL.Path)
+		log.Info("[Req]", "method", r.Method, "path", r.URL.Path)
 
 		next.ServeHTTP(w, r)
 
-		log.Info("[Res] %s %s\n", r.Method, r.URL.Path)
+		log.Info("[Res]", "method", r.Method, "path", r.URL.Path)
 	})
 }
 
@@ -34,7 +33,7 @@ func parseBasicAuth(auth string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("failed base64.StdEncoding.DecodeString: %w", err)
 	}
-	log.Printf("decoded: %v, %s\n", string(decodedAuthContent), auth)
+
 	clientCredentials := strings.Split(string(decodedAuthContent), ":")
 	if len(clientCredentials) != 2 {
 		return "", "", fmt.Errorf("basic auth must have two parts: %v", clientCredentials)
