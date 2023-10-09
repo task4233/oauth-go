@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	authorizationServerPort = 8080
-	resourceServerPort      = 9090
+	authenticationServerPort = 7070
+	authorizationServerPort  = 8080
+	resourceServerPort       = 9090
 )
 
 func main() {
@@ -34,7 +35,7 @@ func main() {
 	// run authorization server
 	wg.Add(1)
 	go func() {
-		log.Info("authorization server is running on port", "port", authorizationServerPort)
+		log.Info("authorization server is running...", "port", authorizationServerPort)
 		if err := authServer.Run(); err != nil {
 			log.Error("failed to run authorization server", "error", err)
 			return
@@ -45,7 +46,7 @@ func main() {
 	// run resource server
 	wg.Add(1)
 	go func() {
-		log.Info("resource server is running on port", "port", resourceServerPort)
+		log.Info("resource server is running...", "port", resourceServerPort)
 		if err := resourceServer.Run(); err != nil {
 			log.Error("failed to run resource server", "error", err)
 			return

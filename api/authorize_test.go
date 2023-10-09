@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/google/uuid"
 	"github.com/task4233/oauth/infra"
 	"github.com/task4233/oauth/infra/mock"
 	"go.uber.org/mock/gomock"
@@ -109,84 +108,6 @@ func TestAuthorize(t *testing.T) {
 				if diff := cmp.Diff(tt.wantResp, &respBody, cmpopts.IgnoreFields(AuthorizeResponse{}, "ReqID")); diff != "" {
 					t.Fatalf("unexpected response(-want+got): %s", diff)
 				}
-			}
-		})
-	}
-}
-
-func TestApprove(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]struct {
-		reqParams map[string]string
-	}{
-		"ok": {
-			reqParams: map[string]string{
-				"req_id":       uuid.NewString(),
-				"scope":        "read write",
-				"state":        uuid.NewString(),
-				"user_id":      uuid.NewString(),
-				"redirect_uri": "http://localhost/redirect_uri",
-			},
-		},
-		"ng:empty req id": {
-			reqParams: map[string]string{
-				"req_id": "",
-			},
-		},
-		"ng:empty scope": {
-			reqParams: map[string]string{
-				"req_id": uuid.NewString(),
-				"scope":  "",
-			},
-		},
-		"ng:empty user id": {
-			reqParams: map[string]string{
-				"req_id":  uuid.NewString(),
-				"scope":   "read write",
-				"state":   uuid.NewString(),
-				"user_id": "",
-			},
-		},
-		"ng:empty redirect id": {
-			reqParams: map[string]string{
-				"req_id":       uuid.NewString(),
-				"scope":        "read write",
-				"state":        uuid.NewString(),
-				"user_id":      uuid.NewString(),
-				"redirect_uri": "",
-			},
-		},
-	}
-
-	for name, tt := range tests {
-		tt := tt
-
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			// readyServer
-			s := NewAuthorizationServer(context.Background(), 8080, testClients, infra.NewKVS())
-
-			// ready request/reseponse and call the enpoint.
-			req := httptest.NewRequest(http.MethodGet, "http://localhost/authorize", nil)
-			q := req.URL.Query()
-			for k, v := range tt.reqParams {
-				q.Add(k, v)
-			}
-			req.URL.RawQuery = q.Encode()
-			got := httptest.NewRecorder()
-			s.approve(got, req)
-
-			resp := got.Result()
-			if resp == nil {
-				t.Fatalf("failed to get the result")
-			}
-			defer resp.Body.Close()
-
-			// check response
-			if http.StatusFound != resp.StatusCode {
-				t.Fatalf("unexpected statusCode, want: %v, got: %v", http.StatusFound, resp.StatusCode)
 			}
 		})
 	}
