@@ -17,11 +17,11 @@ type Server interface {
 func LogAdapter(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log := logger.FromContext(r.Context())
-		log.Info("[Req]", "method", r.Method, "path", r.URL.Path)
+		log.Info("[Req]", "method", r.Method, "path", r.URL)
 
 		next.ServeHTTP(w, r)
 
-		log.Info("[Res]", "method", r.Method, "path", r.URL.Path)
+		log.Info("[Res]", "method", r.Method, "path", r.URL)
 	})
 }
 

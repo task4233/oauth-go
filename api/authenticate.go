@@ -6,8 +6,8 @@ import (
 )
 
 func (s *authorizationServer) authenticate(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("user_id") != "" {
-		s.log.Warn("/authenticate", "msg", "failed to authenticate because of empty user_id")
+	if r.URL.Query().Get("user_id") == "" {
+		s.log.Warn("/authenticate", "msg", "failed to authenticate because of empty client_id")
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
