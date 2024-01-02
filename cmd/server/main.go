@@ -2,52 +2,57 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"time"
+	"sync"
 
-	"github.com/task4233/oauth-go/api"
-	"github.com/task4233/oauth-go/infra"
+	"github.com/task4233/oauth/api"
+	"github.com/task4233/oauth/infra"
+	"github.com/task4233/oauth/logger"
 )
 
 const (
-	authorizationPort = 9001
-	resourcePort      = 9002
+	authenticationServerPort = 7070
+	authorizationServerPort  = 8080
+	resourceServerPort       = 9090
 )
 
 func main() {
 	ctx := context.Background()
-
-	clients := []*api.Client{{
-		ClientID:     "oauth-client-id-1",
-		ClientSecret: "oauth-client-secret-1",
-		RedirectURI:  []string{"http://localhost:9000/callback"},
-		Scope:        "read write",
-	}}
-	resourceData := map[string]string{
-		"name":        "protected resource",
-		"description": "this data is protected by OAuth2.0",
+	log := logger.FromContext(ctx)
+	kvs := infra.NewKVS()
+	clients := map[string]*api.Client{
+		"test_client": {
+			ClientID:     "test_client",
+			ClientSecret: "test_client_secret",
+			Scope:        "read write",
+		},
 	}
 
-	kvs := infra.NewKVS()
-	authorization := api.NewAuthorization(ctx, authorizationPort, clients, kvs)
-	resource := api.NewResource(ctx, resourcePort, kvs, resourceData)
+	authServer := api.NewAuthorizationServer(ctx, authorizationServerPort, clients, kvs)
+	resourceServer := api.NewResourceServer(ctx, resourceServerPort, kvs)
 
-	// running authorization server
+	wg := &sync.WaitGroup{}
+
+	// run authorization server
+	wg.Add(1)
 	go func() {
-		authorization.Log.InfoContext(ctx, fmt.Sprintf("start listening authorization server on %d", authorizationPort))
-		if err := authorization.Run(ctx); err != nil {
-			authorization.Log.WarnContext(ctx, "failed authorization.Run: %v", err.Error())
+		log.Info("authorization server is running...", "port", authorizationServerPort)
+		if err := authServer.Run(); err != nil {
+			log.Error("failed to run authorization server", "error", err)
+			return
 		}
+		wg.Done()
 	}()
 
-	// running resource server
+	// run resource server
+	wg.Add(1)
 	go func() {
-		resource.Log.InfoContext(ctx, fmt.Sprintf("start listening resource server on %d", resourcePort))
-		if err := resource.Run(ctx); err != nil {
-			resource.Log.WarnContext(ctx, "failed resource.Run: %v", err.Error())
+		log.Info("resource server is running...", "port", resourceServerPort)
+		if err := resourceServer.Run(); err != nil {
+			log.Error("failed to run resource server", "error", err)
+			return
 		}
+		wg.Done()
 	}()
 
-	time.Sleep(5 * time.Minute)
-
+	wg.Wait()
 }

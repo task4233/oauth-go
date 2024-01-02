@@ -1,3 +1,5 @@
+//go:generate mockgen -source $GOFILE -destination ../mock/mock_$GOFILE -package mock
+
 package repository
 
 type KVS interface {

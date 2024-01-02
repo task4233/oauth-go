@@ -2,84 +2,25 @@ package api
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/task4233/oauth-go/common"
-	"github.com/task4233/oauth-go/infra/repository"
-	"github.com/task4233/oauth-go/logger"
-	"golang.org/x/exp/slices"
+	"github.com/task4233/oauth/common"
+	"github.com/task4233/oauth/infra/repository"
+	"github.com/task4233/oauth/logger"
 	"golang.org/x/exp/slog"
 )
 
-// Client is a client application which is defined in RFC6749.
+const dummyToken = "dummy_token"
+
 type Client struct {
 	ClientID     string
 	ClientSecret string
-	RedirectURI  []string
 	Scope        string
-}
-
-// Code is a code which is defined in RFC6749.
-type Code struct {
-	AuthorizationEndpointRequest url.Values
-	Scopes                       []string
-	UserID                       string
-}
-
-// Authorization provides features for an authorization server of OAuth 2.0 which is defined in RFC6749.
-// ref: https://datatracker.ietf.org/doc/html/rfc6749
-type Authorization struct {
-	AuthorizationEndpoint string
-	kvs                   repository.KVS
-	clients               map[string]*Client
-	codes                 map[string]*Code
-	requests              map[string]url.Values
-	srv                   http.Server
-	TokenEndpoint         string
-	Log                   *slog.Logger
-}
-
-func NewAuthorization(
-	ctx context.Context,
-	port int,
-	clients []*Client,
-	kvs repository.KVS,
-) Authorization {
-	a := Authorization{
-		Log: logger.FromContext(ctx),
-	}
-	a.kvs = kvs
-	a.clients = map[string]*Client{}
-	for _, c := range clients {
-		a.clients[c.ClientID] = c
-	}
-	a.srv.Addr = fmt.Sprintf(":%d", port)
-	a.srv.Handler = a.route()
-	a.requests = map[string]url.Values{}
-	a.codes = map[string]*Code{}
-
-	return a
-}
-
-func (s *Authorization) Run(ctx context.Context) error {
-	return s.srv.ListenAndServe()
-}
-
-func (s *Authorization) route() http.Handler {
-	r := http.NewServeMux()
-
-	r.HandleFunc("/approve", s.approve)
-	r.HandleFunc("/authorize", s.authorize)
-	r.HandleFunc("/token", s.token)
-
-	return r
 }
 
 type AuthorizeResponse struct {
@@ -89,254 +30,251 @@ type AuthorizeResponse struct {
 	Scope  string `json:"scope"`
 }
 
-// authorize provides "Authorization Endpoint".
-// ref: https://datatracker.ietf.org/doc/html/rfc6749#section-3.1
-func (s *Authorization) authorize(w http.ResponseWriter, r *http.Request) {
-	s.Log.InfoContext(r.Context(), "GET /authorize is called")
+type TokenResponse struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	Scope       string `json:"scope"`
+}
 
-	// get client with a clientID contained in query parameter in request
+type code struct {
+	req    url.Values
+	scope  string
+	userID string
+}
+
+var _ (Server) = (*authorizationServer)(nil)
+
+// authorizationServer is a server for issueing access tokens to the client
+// after successfully authenticating the resource owner and obtaining authorization.
+type authorizationServer struct {
+	port     int
+	srv      http.Server
+	kvs      repository.KVS
+	clients  map[string]*Client
+	requests map[string]url.Values
+	codes    map[string]*code
+	log      *slog.Logger
+}
+
+func NewAuthorizationServer(
+	ctx context.Context,
+	port int,
+	clients map[string]*Client,
+	kvs repository.KVS,
+) *authorizationServer {
+	s := &authorizationServer{port: port}
+	s.srv.Addr = fmt.Sprintf(":%d", port)
+	s.srv.Handler = s.route()
+	s.kvs = kvs
+	s.clients = clients
+	s.requests = make(map[string]url.Values)
+	s.codes = make(map[string]*code)
+	s.log = logger.FromContext(ctx)
+	return s
+}
+
+func (s *authorizationServer) Run() error {
+	return s.srv.ListenAndServe()
+}
+
+func (s *authorizationServer) route() http.Handler {
+	h := http.NewServeMux()
+
+	h.Handle("/authorize", LogAdapter(http.HandlerFunc(s.authorize)))
+	h.Handle("/authenticate", LogAdapter(http.HandlerFunc(s.authenticate)))
+	h.Handle("/token", LogAdapter(http.HandlerFunc(s.token)))
+
+	return h
+}
+
+// authorize is for handing 2.send the authorization.
+func (s *authorizationServer) authorize(w http.ResponseWriter, r *http.Request) {
+	// get query parameters
+	responseType := r.URL.Query().Get("response_type")
 	clientID := r.URL.Query().Get("client_id")
-	client, ok := s.clients[clientID]
-	if !ok {
-		msg := fmt.Sprintf("client_id is invalid: %s", clientID)
-		s.Log.WarnContext(r.Context(), msg)
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, msg)
+	state := r.URL.Query().Get("state")
+	redirectURI := r.URL.Query().Get("redirect_uri")
+	scope := r.URL.Query().Get("scope")
+
+	// if there's no correct authorization header, redirect to authenticate.
+	authorization := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authorization, "Bearer "+dummyToken+":") {
+		s.log.Error("/authorize", "msg", "failed to authenticate", "invalid token", authorization)
+		u, err := url.Parse(r.URL.String())
+		if err != nil {
+			s.log.Error("/authorize", "msg", "failed to parse url", "error", err)
+			s.handleError(w, r, map[string]string{
+				"error": serverError.String(),
+				"state": state,
+			})
+			return
+		}
+		u.Path = "/authenticate"
+		http.Redirect(w, r, u.String(), http.StatusFound)
+		return
+	}
+	userID := strings.TrimPrefix(authorization, "Bearer "+dummyToken+":")
+
+	// validate query parameters
+	if responseType != "code" {
+		s.log.Error("/authorize", "invalid response_type", responseType)
+		s.handleError(w, r, map[string]string{
+			"error": unsupportedResponseType.String(),
+			"state": state,
+		})
 		return
 	}
 
-	// check redirect_uri
-	redirectURI := r.URL.Query().Get("redirect_uri")
-	if !slices.Contains(client.RedirectURI, redirectURI) {
-		msg := fmt.Sprintf("redirect_uri is invalid: %s, expected: %#v", redirectURI, client.RedirectURI)
-		s.Log.WarnContext(r.Context(), msg)
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, msg)
+	client, ok := s.clients[clientID]
+	if !ok {
+		s.log.Error("/authorize", "invalid client_id", clientID)
+		s.handleError(w, r, map[string]string{
+			"error": unauthorizedClient.String(),
+			"state": state,
+		})
 		return
 	}
 
 	// check scope
-	reqScope := strings.Split(r.URL.Query().Get("scope"), " ")
-	clientScope := strings.Split(client.Scope, " ")
-	if !common.AreTwoUnorderedSlicesSame(reqScope, clientScope) {
-		redirectURI, err := constructURIWithQueries(redirectURI, map[string]string{"error": "invalid_scope"})
-		if err != nil {
-			s.Log.WarnContext(r.Context(), err.Error())
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, err.Error())
-			return
-		}
-		http.Redirect(w, r, redirectURI, http.StatusFound)
+	err := s.isValidScope(scope, client)
+	if err != nil {
+		s.log.Error("/authorize", "invalid scope", scope, "error", err)
+		s.handleError(w, r, map[string]string{
+			"error": invalidScope.String(),
+			"state": state,
+		})
 		return
 	}
 
-	// if all checks are passed, redirect to redirect_uri with code and state.
+	// generate req_id and store the request
 	reqID := uuid.New().String()
 	s.requests[reqID] = r.URL.Query()
 
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(AuthorizeResponse{
-		Client: *client,
-		State:  r.Form.Get("state"),
-		ReqID:  reqID,
-		Scope:  client.Scope,
+	// generate code and store the code
+	c := uuid.New().String()
+	s.codes[c] = &code{
+		req:    s.requests[reqID],
+		scope:  scope,
+		userID: userID,
+	}
+
+	// redirect to redirect_uri
+	redirectURI, err = common.ConstructURLWithQueries(redirectURI, map[string]string{
+		"code":  c,
+		"state": state,
 	})
-
-}
-
-func (s *Authorization) approve(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	s.Log.InfoContext(ctx, "GET /approve is called")
-
-	reqID := r.URL.Query().Get("req_id")
-	req, ok := s.requests[reqID]
-	if !ok {
-		msg := fmt.Sprintf("no matched request with req_id: %s", reqID)
-		s.Log.WarnContext(ctx, msg)
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, msg)
-		return
-	}
-
-	redirectURI := r.URL.Query().Get("redirect_uri")
-	// if r.FormValue("approve") != "true" {
-	// 	redirectURI, err := constructURIWithQueries(redirectURI, map[string]string{"error": "access_denied"})
-	// 	if err != nil {
-	// 		s.Log.WarnContext(ctx, err.Error())
-	// 		w.WriteHeader(http.StatusBadRequest)
-	// 		fmt.Fprint(w, err.Error())
-	// 		return
-	// 	}
-	// 	http.Redirect(w, r, redirectURI, http.StatusFound)
-	// 	return
-	// }
-
-	switch req.Get("response_type") {
-	case "code":
-		code := uuid.New().String()
-		userID := r.FormValue("user")
-
-		// TODO: maybe fix this: remove prefix scope_ from scope?
-		scope := strings.Split(r.FormValue("scope"), " ")
-		client := s.clients[req.Get("client_id")]
-		cScope := strings.Split(client.Scope, " ")
-		if !common.AreTwoUnorderedSlicesSame(cScope, scope) {
-			redirectURI, err := constructURIWithQueries(redirectURI, map[string]string{"error": "invalid_scope"})
-			if err != nil {
-				s.Log.WarnContext(ctx, err.Error())
-				w.WriteHeader(http.StatusBadRequest)
-				fmt.Fprint(w, err.Error())
-				return
-			}
-			http.Redirect(w, r, redirectURI, http.StatusFound)
-			return
-		}
-
-		s.codes[code] = &Code{
-			AuthorizationEndpointRequest: req,
-			Scopes:                       scope,
-			UserID:                       userID,
-		}
-
-		redirectURI, err := constructURIWithQueries(redirectURI, map[string]string{
-			"code":  code,
-			"state": req.Get("state"),
+	if err != nil {
+		s.log.Error("failed to constructURIWithQueries: %v", err)
+		s.handleError(w, r, map[string]string{
+			"error": serverError.String(),
+			"state": state,
 		})
-		if err != nil {
-			redirectURI, err = constructURIWithQueries(redirectURI, map[string]string{"error": "invalid_scope"})
-			s.Log.WarnContext(ctx, err.Error())
-			http.Redirect(w, r, redirectURI, http.StatusFound)
-			return
-		}
-		http.Redirect(w, r, redirectURI, http.StatusFound)
-	default:
-		redirectURI, err := constructURIWithQueries(redirectURI, map[string]string{"error": "unsupported_response_type"})
-		if err != nil {
-			s.Log.WarnContext(ctx, err.Error())
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, err.Error())
-			return
-		}
-		http.Redirect(w, r, redirectURI, http.StatusFound)
+		return
 	}
+
+	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
-func (s *Authorization) token(w http.ResponseWriter, r *http.Request) {
-	var clientID, clientSecret string
-	var err error
-
+// token is for handling 8.send a token issue request.
+func (s *authorizationServer) token(w http.ResponseWriter, r *http.Request) {
 	auth := r.Header.Get("Authorization")
-	if auth != "" {
-		// check the auth header
-		clientID, clientSecret, err = parseBasicAuth(auth)
-		if err != nil {
-			s.Log.WarnContext(r.Context(), err.Error())
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, err.Error())
-			return
-		}
-	} else {
-		if clientID != "" {
-			s.Log.WarnContext(r.Context(), "client attempted to authenticate with multiple methods")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": "invalid_client"})
-			return
-		}
-
-		// check the body
-		clientID = r.FormValue("client_id")
-		clientSecret = r.FormValue("client_secret")
+	clientID, clientSecret, err := parseBasicAuth(auth)
+	if err != nil {
+		s.log.Error("/token", "failed to parseBasicAuth", err)
+		s.handleError(w, r, map[string]string{
+			"error": invalidRequest.String(),
+		})
+		return
 	}
 
-	client, ok := s.clients[clientID]
+	// get query parameters
+	grantType := r.URL.Query().Get("grant_type")
+	code := r.URL.Query().Get("code")
+	redirectURL := r.URL.Query().Get("redirect_uri")
+	cID := r.URL.Query().Get("client_id")
+
+	// validate query parameters
+	if grantType != "authorization_code" {
+		s.log.Error("/token", "invalid grant_type", grantType)
+		s.handleError(w, r, map[string]string{
+			"error": unsupportedResponseType.String(),
+		})
+		return
+	}
+	c, ok := s.codes[code]
 	if !ok {
-		s.Log.WarnContext(r.Context(), fmt.Sprintf("client_id: %s is invalid", clientID))
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid_client"})
+		s.log.Error("/token", "invalid code", code)
+		s.handleError(w, r, map[string]string{
+			"error": invalidRequest.String(),
+		})
 		return
 	}
-	if client.ClientSecret != clientSecret {
-		s.Log.WarnContext(r.Context(), fmt.Sprintf("client_secret is invalid, expected %s got %s", client.ClientSecret, clientSecret))
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid_client"})
+	if redirectURL == "" {
+		s.log.Error("/token", "invalid redirect_uri", redirectURL)
+		s.handleError(w, r, map[string]string{
+			"error": invalidRequest.String(),
+		})
+		return
+	}
+	client, ok := s.clients[cID]
+	if !ok {
+		s.log.Error("/token", "invalid client_id", clientID)
+		s.handleError(w, r, map[string]string{
+			"error": unauthorizedClient.String(),
+		})
 		return
 	}
 
-	switch r.FormValue("grant_type") {
-	case "authorization_code":
-		code := s.codes[r.FormValue("code")]
-		if code == nil {
-			s.Log.WarnContext(r.Context(), fmt.Sprintf("code: %s is invalid", r.FormValue("code")))
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
-			return
-		}
-		expectedClientID := code.AuthorizationEndpointRequest.Get("client_id")
-		if expectedClientID != clientID {
-			s.Log.WarnContext(r.Context(), fmt.Sprintf("client_id is mismatch, expected %s got %s", expectedClientID, clientID))
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
-			return
-		}
-
-		// TODO: replace the way to make accessToken because uuid is not suitable for accessToken
-		accessToken := uuid.New().String()
-		cScope := strings.Join(code.Scopes, " ")
-
-		// TODO: insert accessToken, clientID, clientScope into kvs\
-		vv := map[string]string{
-			"access_token": accessToken,
-			"client_id":    clientID,
-			"scope":        cScope,
-		}
-		s.kvs.Set(accessToken, vv)
-
-		tokenResponse := map[string]string{
-			"access_token": accessToken,
-			"token_type":   "Bearer",
-			"scope":        cScope,
-		}
-		s.Log.InfoContext(r.Context(), fmt.Sprintf("access token is issued: %#v", tokenResponse))
-
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(tokenResponse)
-	case "refresh_token":
-		panic("implement refresh token grant type")
-	default:
-		msg := fmt.Sprintf("unknown grant_type: %s", r.FormValue("grant_type"))
-		s.Log.WarnContext(r.Context(), msg)
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "unsupported_grant_type"})
+	// validate client credentials
+	if client.ClientID != clientID || client.ClientSecret != clientSecret {
+		s.log.Error("/token", "msg", "invalid client credentials", "clientID", clientID, "clientSecret", clientSecret)
+		s.handleError(w, r, map[string]string{
+			"error": unauthorizedClient.String(),
+		})
+		return
 	}
+
+	// TODO: not to use uuid
+	accessToken := uuid.New().String()
+	vv := map[string]string{
+		"access_token": accessToken,
+		"client_id":    clientID,
+		"scope":        c.scope,
+	}
+	err = s.kvs.Set(accessToken, vv)
+	if err != nil {
+		s.log.Error("/token", "msg", "failed to Set", "error", err)
+		s.handleError(w, r, map[string]string{
+			"error": serverError.String(),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(TokenResponse{
+		AccessToken: accessToken,
+		TokenType:   "Bearer",
+		Scope:       c.scope,
+	})
 }
 
-func constructURIWithQueries(uri string, queries map[string]string) (string, error) {
-	u, err := url.Parse(uri)
+func (s *authorizationServer) handleError(w http.ResponseWriter, r *http.Request, queryParameters map[string]string) {
+	redirectURI, err := common.ConstructURLWithQueries(r.URL.Query().Get("redirect_uri"), queryParameters)
 	if err != nil {
-		return "", fmt.Errorf("failed url.Parse: %w", err)
+		msg := fmt.Sprintf("failed to constructURIWithQueries: %v", err)
+		s.log.Warn(msg)
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, err.Error())
+		return
 	}
-	q := u.Query()
-	for k, v := range queries {
-		q.Set(k, v)
-	}
-	u.RawQuery = q.Encode()
-
-	return u.String(), nil
+	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
-func parseBasicAuth(auth string) (string, string, error) {
-	if !strings.HasPrefix(strings.ToLower(auth), "basic ") {
-		return "", "", fmt.Errorf("auth header is not basic: %s", auth)
+func (s *authorizationServer) isValidScope(reqScope string, client *Client) error {
+	reqScopes := strings.Split(reqScope, " ")
+	clientScopes := strings.Split(client.Scope, " ") // it can be cached.
+	if !common.AreTwoUnorderedSlicesSame(reqScopes, clientScopes) {
+		return fmt.Errorf("invalid scope, want: %v, req: %v", client.Scope, reqScope)
 	}
-	decodedAuthContent, err := base64.StdEncoding.DecodeString(auth[len("basic "):])
-	if err != nil {
-		return "", "", fmt.Errorf("failed base64.StdEncoding.DecodeString: %w", err)
-	}
-	log.Printf("decoded: %v, %s\n", string(decodedAuthContent), auth)
-	clientCredentials := strings.Split(string(decodedAuthContent), ":")
-	if len(clientCredentials) != 2 {
-		return "", "", fmt.Errorf("basic auth must have two parts: %v", clientCredentials)
-	}
-
-	return clientCredentials[0], clientCredentials[1], nil
+	return nil
 }

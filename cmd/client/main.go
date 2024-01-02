@@ -1,215 +1,169 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
-	"strings"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/task4233/oauth-go/api"
+	"github.com/task4233/oauth/api"
+	"github.com/task4233/oauth/logger"
+	"golang.org/x/exp/slog"
 )
 
-// authorization server information
-var authServer = map[string]string{
-	"authorizationEndpoint": "http://localhost:9001/authorize",
-	"tokenEndpoint":         "http://localhost:9001/token",
-	"approveEndpoint":       "http://localhost:9001/approve",
-}
-
-// client information
-var client = api.Client{
-	ClientID:     "oauth-client-id-1",
-	ClientSecret: "oauth-client-secret-1",
-	RedirectURI:  []string{"http://localhost:9000/callback"},
-	Scope:        "read write",
-}
-
-const protectedResource = "http://localhost:9002/resource"
-
-var state string
+const (
+	timeout                 = 5 * time.Second
+	clientServerPort        = 8000
+	authorizationServerPort = 8080
+	resourceServerPort      = 9090
+)
 
 func main() {
-	http.HandleFunc("/authorize", authorizeHandler)
-	http.HandleFunc("/approve", approveHandler)
-	http.HandleFunc("/callback", callbackHandler)
-	http.HandleFunc("/resource", resourceHandler)
+	ctx := context.Background()
+	log := logger.FromContext(ctx)
+	clients := client{
+		clientID:     "test_client",
+		clientSecret: "test_client_secret",
+		scope:        "read write",
+	}
 
-	http.ListenAndServe(":9000", nil)
+	clientServer := NewClientServer(ctx, clientServerPort, clients)
+
+	log.Info("client server is running...", "port", clientServerPort)
+	if err := clientServer.Run(); err != nil {
+		log.Error("failed to run client server", "error", err)
+		return
+	}
 }
 
-func authorizeHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("/authorize is called: %#v\n", r)
-
-	state = uuid.New().String()
-
-	// authroize request
-	v := url.Values{
-		"response_type": []string{"code"},
-		"scope":         []string{client.Scope},
-		"client_id":     []string{client.ClientID},
-		"redirect_uri":  client.RedirectURI,
-		"state":         []string{state},
-	}
-	baseURL := authServer["authorizationEndpoint"]
-	uStr := fmt.Sprintf("%s?%s", baseURL, v.Encode())
-
-	log.Printf("redirect: %s\n", uStr)
-	http.Redirect(w, r, uStr, http.StatusFound)
+type client struct {
+	clientID     string
+	clientSecret string
+	scope        string
+	state        string
 }
 
-func approveHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("/approve is called: %#v\n", r)
-
-	u, err := url.Parse(authServer["approveEndpoint"])
-	if err != nil {
-		log.Printf("failed to parse approve endpoint: %v\n", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	q := u.Query()
-	q.Set("req_id", r.URL.Query().Get("req_id"))
-	q.Set("redirect_uri", r.URL.Query().Get("redirect_uri"))
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequest(http.MethodPost, u.String(), nil)
-	if err != nil {
-		log.Printf("failed to create request: %v\n", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	formData := url.Values{
-		"response_type": {"code"},
-		"scope":         {r.URL.Query().Get("scope")},
-		"client_id":     {r.URL.Query().Get("client_id")},
-		"state":         {r.URL.Query().Get("state")},
-		"grant_type":    {"authorization_code"},
-		"redirect_uri":  {client.RedirectURI[0]},
-	}
-	req.Body = io.NopCloser(strings.NewReader(formData.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(client.ClientID, client.ClientSecret)
-	log.Printf("req header: %v\n", req.Header)
-
-	acceptRes, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Printf("failed to request token: %v\n", err)
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	log.Printf("token response: %#v\n", acceptRes)
+type clientServer struct {
+	port   int
+	srv    http.Server
+	client client
+	log    *slog.Logger
 }
 
-func callbackHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("/callback is called: %#v\n", r)
+func NewClientServer(ctx context.Context, port int, c client) *clientServer {
+	s := &clientServer{port: port}
+	s.srv.Addr = fmt.Sprintf(":%d", port)
+	s.srv.Handler = s.route()
+	s.client = c
+	s.log = logger.FromContext(ctx)
+	return s
+}
 
-	errStr := r.URL.Query().Get("error")
-	if errStr != "" {
-		log.Printf("error is given in callback handler: %s\n", errStr)
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
+func (s *clientServer) Run() error {
+	return s.srv.ListenAndServe()
+}
 
-	reqState := r.URL.Query().Get("state")
-	if state == "" || state != reqState {
-		log.Printf("invalid state: %s, expected: %s\n", reqState, state)
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
+func (s *clientServer) route() http.Handler {
+	h := http.NewServeMux()
 
-	req, err := http.NewRequest(http.MethodPost, authServer["tokenEndpoint"], nil)
+	h.Handle("/authorize", api.LogAdapter(http.HandlerFunc(s.authorize)))
+	h.Handle("/callback", api.LogAdapter(http.HandlerFunc(s.callback)))
+
+	return h
+}
+
+func (s *clientServer) authorize(w http.ResponseWriter, r *http.Request) {
+	redirectURI := fmt.Sprintf("http://localhost:%d/callback", clientServerPort)
+	s.client.state = uuid.NewString()
+
+	params := url.Values{}
+	params.Add("response_type", "code")
+	params.Add("client_id", s.client.clientID)
+	params.Add("state", s.client.state)
+	params.Add("redirect_uri", redirectURI)
+	params.Add("scope", s.client.scope)
+
+	targetURL := fmt.Sprintf("http://localhost:%d/authorize?%s",
+		authorizationServerPort,
+		params.Encode(),
+	)
+
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
-		log.Printf("failed to create request: %v\n", err)
-		w.WriteHeader(http.StatusInternalServerError)
+		s.log.Error("failed to create request", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for k, v := range r.Header {
+		for _, vv := range v {
+			req.Header.Add(k, vv)
+		}
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.log.Error("failed to send request", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		s.log.Error("failed to get authorization", "status", resp.StatusCode)
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
 		return
 	}
 
+	// redirect to callback
+	io.Copy(w, resp.Body)
+}
+
+func (s *clientServer) callback(w http.ResponseWriter, r *http.Request) {
+	// state check
+	gotState := r.URL.Query().Get("state")
+	if s.client.state != gotState {
+		s.log.Error("invalid state", "want", s.client.state, "got", gotState)
+		http.Error(w, "invalid state", http.StatusBadRequest)
+		return
+	}
 	code := r.URL.Query().Get("code")
-	formData := url.Values{
-		"grant_type":   {"authorization_code"},
-		"code":         {code},
-		"redirect_uri": {client.RedirectURI[0]},
-	}
-	req.Body = io.NopCloser(strings.NewReader(formData.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(client.ClientID, client.ClientSecret)
 
-	tokenRes, err := http.DefaultClient.Do(req)
+	// get token
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	params := url.Values{}
+	params.Add("grant_type", "authorization_code")
+	params.Add("code", code)
+	params.Add("redirect_uri", fmt.Sprintf("http://localhost:%d/", clientServerPort))
+	params.Add("client_id", s.client.clientID)
+	params.Add("state", gotState)
+
+	targetURL := fmt.Sprintf("http://localhost:%d/token?%s",
+		authorizationServerPort,
+		params.Encode(),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, nil)
 	if err != nil {
-		log.Printf("failed to request token: %v\n", err)
-		w.WriteHeader(http.StatusUnauthorized)
+		s.log.Error("failed to create token issue request", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	log.Printf("token response: %#v\n", tokenRes)
-
-	if tokenRes.StatusCode != http.StatusOK {
-		log.Printf("failed to request token: %v\n", tokenRes.Status)
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	dat, err := io.ReadAll(tokenRes.Body)
+	req.SetBasicAuth(s.client.clientID, s.client.clientSecret)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("failed to read token response: %v\n", err)
-		w.WriteHeader(http.StatusUnauthorized)
+		s.log.Error("failed to send token issue request", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer tokenRes.Body.Close()
-	log.Printf("access token: %s\n", string(dat))
+	defer resp.Body.Close()
+	io.Copy(w, resp.Body)
 }
-
-func resourceHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("/resource is called: %#v\n", r)
-	req, err := http.NewRequest(http.MethodPost, protectedResource, nil)
-	if err != nil {
-		msg := fmt.Sprintf("failed to create request: %v", err)
-		log.Println(msg)
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, msg)
-		return
-	}
-
-	accessToken := r.URL.Query().Get("access_token")
-	if accessToken == "" {
-		msg := "no access token is given"
-		log.Println(msg)
-		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, msg)
-		return
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		msg := fmt.Sprintf("failed to request resource: %v", err)
-		log.Println(msg)
-		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, msg)
-		return
-	}
-
-	dat, err := io.ReadAll(res.Body)
-	if err != nil {
-		msg := fmt.Sprintf("failed to read resource response: %v", err)
-		log.Println(msg)
-		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, msg)
-		return
-	}
-	defer res.Body.Close()
-
-	log.Printf("resource response: %s\n", string(dat))
-	json.NewEncoder(w).Encode(string(dat))
-}
-
-/*
-http://localhost:9000/approve?client_id=oauth-client-id-1&redirect_uri=http%3A%2F%2Flocalhost%3A9000%2Fcallback&response_type=code&scope=read+write&state=a58f36e4-7d67-4a5d-a529-ca5f866a9044&req_id=2a131d2b-0b3f-4a85-90db-6c719fddb776
-*/
