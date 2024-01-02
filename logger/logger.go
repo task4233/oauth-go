@@ -2,9 +2,8 @@ package logger
 
 import (
 	"context"
+	"log/slog"
 	"os"
-
-	"golang.org/x/exp/slog"
 )
 
 type loggerKey struct{}

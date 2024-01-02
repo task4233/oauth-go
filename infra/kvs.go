@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-var KeyEmptyError = errors.New("key is empty")
+var ErrKeyEmpty = errors.New("key is empty")
 
 type KVS struct {
 	// data should have "__id" key
@@ -35,7 +35,7 @@ func (k *KVS) Get(key string) (map[string]string, error) {
 // Set overwrite the value if the key has already been set.
 func (k *KVS) Set(key string, value map[string]string) error {
 	if key == "" {
-		return KeyEmptyError
+		return ErrKeyEmpty
 	}
 
 	k.mu.Lock()

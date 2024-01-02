@@ -10,25 +10,17 @@ import (
 )
 
 const (
-	authenticationServerPort = 7070
-	authorizationServerPort  = 8080
-	resourceServerPort       = 9090
+	authorizationServerPort = 8080
+	resourceServerPort      = 9090
 )
 
 func main() {
 	ctx := context.Background()
 	log := logger.FromContext(ctx)
 	kvs := infra.NewKVS()
-	clients := map[string]*api.Client{
-		"test_client": {
-			ClientID:     "test_client",
-			ClientSecret: "test_client_secret",
-			Scope:        "read write",
-		},
-	}
 
-	authServer := api.NewAuthorizationServer(ctx, authorizationServerPort, clients, kvs)
-	resourceServer := api.NewResourceServer(ctx, resourceServerPort, kvs)
+	authServer := api.NewAuthorizationServer(authorizationServerPort, kvs, log)
+	resourceServer := api.NewResourceServer(resourceServerPort, kvs, log)
 
 	wg := &sync.WaitGroup{}
 
