@@ -69,13 +69,35 @@ func (s *clientServer) Run() error {
 func (s *clientServer) route() http.Handler {
 	h := http.NewServeMux()
 
+	h.Handle(("/authenticate"), api.LogAdapter(http.HandlerFunc(s.authenticate)))
 	h.Handle("/authorize", api.LogAdapter(http.HandlerFunc(s.authorize)))
 	h.Handle("/callback", api.LogAdapter(http.HandlerFunc(s.callback)))
 
 	return h
 }
 
+func (s *clientServer) authenticate(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("user_id") == "" {
+		s.log.Warn("/authenticate", "msg", "failed to authenticate because of empty client_id")
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	w.Header().Add("Authorization", fmt.Sprintf("Bearer %s:%s", "dummyToken", r.URL.Query().Get("user_id")))
+
+	http.Redirect(w, r, fmt.Sprintf("http://localhost:%d/authorize", clientServerPort), http.StatusFound)
+}
+
 func (s *clientServer) authorize(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") == "" {
+		// w.Header().Add("Content-Type", "text/html")
+		// fmt.Fprint(w, `<form action="/authenticate" method="get">
+		// user_id: <input id="user_id" name="user_id" />
+		// <input type="submit" />
+		// </form>`)
+		// return
+		r.Header.Add("Authorization", fmt.Sprintf("Bearer %s:%s", "dummy_token", "1"))
+	}
+
 	redirectURI := fmt.Sprintf("http://localhost:%d/callback", clientServerPort)
 	s.client.state = uuid.NewString()
 
