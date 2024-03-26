@@ -34,7 +34,7 @@ func (s *ResourceServer) route() http.Handler {
 }
 
 func (s *ResourceServer) Run() error {
-	return nil
+	return http.ListenAndServe(s.srv.Addr, s.srv.Handler)
 }
 
 func (s *ResourceServer) index(w http.ResponseWriter, r *http.Request) {

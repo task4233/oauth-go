@@ -18,8 +18,10 @@ func main() {
 	ctx := context.Background()
 	log := logger.FromContext(ctx)
 	kvs := infra.NewKVS()
+	clientRepo := infra.NewClientRepository()
+	accessTokenRepo := infra.NewAccessTokenRepository()
 
-	authServer := api.NewAuthorizationServer(authorizationServerPort, kvs, log)
+	authServer := api.NewAuthorizationServer(authorizationServerPort, clientRepo, accessTokenRepo, log)
 	resourceServer := api.NewResourceServer(resourceServerPort, kvs, log)
 
 	wg := &sync.WaitGroup{}

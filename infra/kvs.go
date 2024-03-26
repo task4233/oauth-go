@@ -10,18 +10,18 @@ var ErrKeyEmpty = errors.New("key is empty")
 
 type KVS struct {
 	// data should have "__id" key
-	data map[string]map[string]string
+	data map[string]map[string]any
 	mu   *sync.Mutex
 }
 
 func NewKVS() *KVS {
 	return &KVS{
-		data: map[string]map[string]string{},
+		data: map[string]map[string]any{},
 		mu:   &sync.Mutex{},
 	}
 }
 
-func (k *KVS) Get(key string) (map[string]string, error) {
+func (k *KVS) Get(key string) (map[string]any, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	d, ok := k.data[key]
@@ -33,7 +33,7 @@ func (k *KVS) Get(key string) (map[string]string, error) {
 }
 
 // Set overwrite the value if the key has already been set.
-func (k *KVS) Set(key string, value map[string]string) error {
+func (k *KVS) Set(key string, value map[string]any) error {
 	if key == "" {
 		return ErrKeyEmpty
 	}
