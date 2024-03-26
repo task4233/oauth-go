@@ -1,61 +1,42 @@
 package api
 
 import (
-	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/task4233/oauth/infra/repository"
-	"github.com/task4233/oauth/logger"
-	"golang.org/x/exp/slog"
 )
 
-// resourceServer is a server for hosting protected resources, capable of accepting
-// and responding to protected resource requests using access tokens.
-type resourceServer struct {
-	port int
+type ResourceServer struct {
 	srv  http.Server
-	kvs  repository.KVS
+	repo repository.KVS
 	log  *slog.Logger
 }
 
-func NewResourceServer(ctx context.Context, port int, kvs repository.KVS) Server {
-	s := &resourceServer{port: port}
-	s.srv.Addr = fmt.Sprintf(":%d", port)
-	s.srv.Handler = s.route()
-	s.kvs = kvs
-	s.log = logger.FromContext(ctx)
-	return s
-}
-
-func (s *resourceServer) Run() error {
-	return s.srv.ListenAndServe()
-}
-
-func (s *resourceServer) route() http.Handler {
-	h := http.NewServeMux()
-	h.HandleFunc("/", s.index)
-	return h
-}
-
-func (s *resourceServer) index(w http.ResponseWriter, r *http.Request) {
-	// extract bearer token from Authorization header
-	authHeader := strings.ToLower(r.Header.Get("Authorization"))
-	inToken, ok := strings.CutPrefix(authHeader, "bearer ")
-	if !ok {
-		s.log.Error("/index", "msg", "failed to extract bearer token from Authorization header", "Authorization header", authHeader)
-		http.Error(w, fmt.Errorf("failed to extract bearer token from Authorization header: %s", authHeader).Error(), http.StatusBadRequest)
-		return
+func NewResourceServer(port int, repo repository.KVS, log *slog.Logger) *ResourceServer {
+	return &ResourceServer{
+		srv: http.Server{
+			Addr:    fmt.Sprintf(":%d", port),
+			Handler: (&ResourceServer{}).route(),
+		},
+		repo: repo,
+		log:  log,
 	}
+}
 
-	// extract token from kvs
-	_, err := s.kvs.Get(inToken)
-	if err != nil {
-		s.log.Error("/index", "msg", "failed to extract token from kvs", "error", err)
-		http.Error(w, fmt.Errorf("failed to extract token from kvs: %w", err).Error(), http.StatusUnauthorized)
-		return
-	}
+func (s *ResourceServer) route() http.Handler {
+	mux := http.NewServeMux()
 
-	w.Write([]byte("You're authorized!"))
+	mux.HandleFunc("/", s.index)
+
+	return mux
+}
+
+func (s *ResourceServer) Run() error {
+	return http.ListenAndServe(s.srv.Addr, s.srv.Handler)
+}
+
+func (s *ResourceServer) index(w http.ResponseWriter, r *http.Request) {
+
 }

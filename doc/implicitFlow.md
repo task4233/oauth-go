@@ -1,0 +1,2 @@
+# Implicit Code Grant
+Implicit Code Grant is one of grant types defined in [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749#section-4.2). This grant is used to obtain access tokens(it does not support the issuance of refresh tokens) and is optimized for public clients known to operate a particular redirection URI..

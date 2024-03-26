@@ -3,6 +3,6 @@
 package repository
 
 type KVS interface {
-	Get(key string) (map[string]string, error)
-	Set(key string, value map[string]string) error
+	Get(key string) (map[string]any, error)
+	Set(key string, value map[string]any) error
 }
