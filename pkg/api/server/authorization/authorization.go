@@ -1,7 +1,9 @@
 package authorization
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/task4233/oauth/pkg/domain/model"
@@ -99,6 +101,14 @@ func (r *AccessTokenRequest) Validate() error {
 	return nil
 }
 
+func (r *AccessTokenRequest) ToModel() *model.TokenRequest {
+	return &model.TokenRequest{
+		Code:        r.Code,
+		RedirectURI: r.RedirectURI,
+		ClientID:    r.ClientID,
+	}
+}
+
 // ref: http://openid-foundation-japan.github.io/rfc6749.ja.html#token-response
 type AccessTokenResponse struct {
 	AccessToken  string // required
@@ -115,13 +125,23 @@ func (s *Authorization) Authorize(w http.ResponseWriter, r *http.Request) {
 	if req.Client == "" {
 		err := req.Validate()
 		if err != nil {
-			AuthRequestError(w, r, nil, err)
+			RequestError(w, r, &ErrorResponse{
+				Error:       InvalidRequest,
+				Description: err.Error(),
+				ErrorURI:    req.RedirectURI,
+				State:       req.State,
+			})
 			return
 		}
 
 		authReq, client, err := s.authUC.AuthorizeBeforeLogin(r.Context(), req.ToModel())
 		if err != nil {
-			AuthRequestError(w, r, authReq, err)
+			RequestError(w, r, &ErrorResponse{
+				Error:       ServerError,
+				Description: err.Error(),
+				ErrorURI:    req.RedirectURI,
+				State:       req.State,
+			})
 			return
 		}
 		RedirectToLogin(w, r, client, authReq.ID)
@@ -131,7 +151,12 @@ func (s *Authorization) Authorize(w http.ResponseWriter, r *http.Request) {
 	// after login
 	authReq, client, err := s.authUC.AuthorizeAfterLogin(r.Context(), req.ToModel())
 	if err != nil {
-		AuthRequestError(w, r, authReq, err)
+		RequestError(w, r, &ErrorResponse{
+			Error:       ServerError,
+			Description: err.Error(),
+			ErrorURI:    req.RedirectURI,
+			State:       req.State,
+		})
 		return
 	}
 	s.AuthResponseCode(w, r, authReq, client)
@@ -151,13 +176,44 @@ func (s *Authorization) AuthResponseCode(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Authorization) Token(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+
+		slog.Info("token response", slog.Any("response", w))
+	}()
+
 	req := s.ParseAccessTokenRequest(r)
 	err := req.Validate()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		RequestError(w, r, &ErrorResponse{
+			Error:       InvalidRequest,
+			Description: err.Error(),
+			ErrorURI:    req.RedirectURI,
+		})
 		return
 	}
-	_ = req
+
+	slog.Info("token request", slog.Any("request", req))
+
+	accessToken, err := s.authUC.Token(r.Context(), req.ToModel())
+	if err != nil {
+		RequestError(w, r, &ErrorResponse{
+			Error:       ServerError,
+			Description: err.Error(),
+			ErrorURI:    req.RedirectURI,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w).Encode(accessToken)
+	if err != nil {
+		RequestError(w, r, &ErrorResponse{
+			Error:       ServerError,
+			Description: err.Error(),
+			ErrorURI:    req.RedirectURI,
+		})
+		return
+	}
 }
 
 func (s *Authorization) ParseAuthorizeRequest(r *http.Request) *AuthorizationRequest {

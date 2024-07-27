@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 type AuthRequest struct {
 	ID           string
 	ClientID     string
@@ -8,4 +10,11 @@ type AuthRequest struct {
 	ResponseType string
 	State        string
 	Scope        string
+	DisabledAt   time.Time
+}
+
+type TokenRequest struct {
+	Code        string
+	RedirectURI string
+	ClientID    string
 }

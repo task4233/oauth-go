@@ -92,7 +92,13 @@ func (s *App) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	code := params.Get("code")
-	tokens, err := s.CodeExchange(r.Context(), code)
+	opts := make([]CodeExchangeOption, 0)
+	opts = append(opts, func() []oauth2.AuthCodeOption {
+		return []oauth2.AuthCodeOption{
+			oauth2.SetAuthURLParam("client_id", s.oauthConfig.ClientID),
+		}
+	})
+	tokens, err := s.CodeExchange(r.Context(), code, opts...)
 	if err != nil {
 		http.Error(w, "failed to exchange token: "+err.Error(), http.StatusUnauthorized)
 		return
