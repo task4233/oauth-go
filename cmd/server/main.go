@@ -1,58 +1,39 @@
 package main
 
 import (
-	"context"
-	"sync"
+	"fmt"
+	"os"
 
-	"github.com/task4233/oauth/api"
-	"github.com/task4233/oauth/infra"
-	"github.com/task4233/oauth/logger"
+	authNServer "github.com/task4233/oauth/pkg/api/server/authentication"
+	authZServer "github.com/task4233/oauth/pkg/api/server/authorization"
+	"github.com/task4233/oauth/pkg/infra"
+	authZUseCase "github.com/task4233/oauth/pkg/usecase/authorization"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
-	authenticationServerPort = 7070
-	authorizationServerPort  = 8080
-	resourceServerPort       = 9090
+	AppServerPort            = 9000
+	authorizationServerPort  = 9001
+	authenticationServerPort = 9002
 )
 
 func main() {
-	ctx := context.Background()
-	log := logger.FromContext(ctx)
-	kvs := infra.NewKVS()
-	clients := map[string]*api.Client{
-		"test_client": {
-			ClientID:     "test_client",
-			ClientSecret: "test_client_secret",
-			Scope:        "read write",
-		},
+	authStorage := infra.NewAuthorizationStorage()
+	authZUC := authZUseCase.NewAuthUseCase(authStorage)
+	authZSV := authZServer.NewAuthorization(authZUC)
+	authNSV := authNServer.NewAuthentication()
+
+	eg := &errgroup.Group{}
+
+	eg.Go(func() error {
+		return authZSV.Run(authorizationServerPort)
+	})
+	eg.Go(func() error {
+		return authNSV.Run(authenticationServerPort)
+	})
+
+	if err := eg.Wait(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v", err)
+		os.Exit(1)
 	}
-
-	authServer := api.NewAuthorizationServer(ctx, authorizationServerPort, clients, kvs)
-	resourceServer := api.NewResourceServer(ctx, resourceServerPort, kvs)
-
-	wg := &sync.WaitGroup{}
-
-	// run authorization server
-	wg.Add(1)
-	go func() {
-		log.Info("authorization server is running...", "port", authorizationServerPort)
-		if err := authServer.Run(); err != nil {
-			log.Error("failed to run authorization server", "error", err)
-			return
-		}
-		wg.Done()
-	}()
-
-	// run resource server
-	wg.Add(1)
-	go func() {
-		log.Info("resource server is running...", "port", resourceServerPort)
-		if err := resourceServer.Run(); err != nil {
-			log.Error("failed to run resource server", "error", err)
-			return
-		}
-		wg.Done()
-	}()
-
-	wg.Wait()
 }
