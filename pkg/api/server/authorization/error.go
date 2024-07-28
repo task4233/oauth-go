@@ -1,6 +1,7 @@
 package authorization
 
 import (
+	"log/slog"
 	"net/http"
 	"net/url"
 )
@@ -24,5 +25,8 @@ func RequestError(w http.ResponseWriter, r *http.Request, errResp *ErrorResponse
 	u.Set("error", string(errResp.Error))
 	u.Set("description", errResp.Description)
 	u.Set("state", errResp.State)
+
+	slog.Info("error", slog.String("u", u.Encode()))
+
 	http.Redirect(w, r, errResp.ErrorURI+"?"+u.Encode(), http.StatusFound)
 }

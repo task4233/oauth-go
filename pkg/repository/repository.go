@@ -18,6 +18,7 @@ type AuthorizationStorage interface {
 	DisableAuthorizationRequest(context.Context, string) error
 
 	CreateAccessToken(context.Context, *model.AccessToken) error
+	GetAccessToken(context.Context, string) (*model.AccessToken, error)
 
 	GetClient(context.Context, string) (model.Client, error)
 }

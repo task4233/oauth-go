@@ -7,16 +7,22 @@ import (
 )
 
 type AccessToken struct {
-	AccessToken  string `json:"access_token"`
-	TokenType    string `json:"token_type"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int64  `json:"expires_in"`
+	AccessToken  string
+	TokenType    string
+	RefreshToken string
+	ExpiresIn    int64
+	Scope        string // space-delimited, ref: https://datatracker.ietf.org/doc/html/rfc6749#section-3.3
 }
 
-func NewAccessToken() *AccessToken {
+func NewAccessToken(authReq *AuthRequest) *AccessToken {
+	if authReq == nil {
+		return nil
+	}
+
 	return &AccessToken{
 		AccessToken: uuid.NewString(),
 		TokenType:   "Bearer",
 		ExpiresIn:   time.Now().Add(time.Minute).Unix(),
+		Scope:       authReq.Scope,
 	}
 }

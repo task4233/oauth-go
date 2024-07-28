@@ -8,6 +8,7 @@ import (
 	"github.com/task4233/oauth/pkg/api/client"
 	authNServer "github.com/task4233/oauth/pkg/api/server/authentication"
 	authZServer "github.com/task4233/oauth/pkg/api/server/authorization"
+	resourceServer "github.com/task4233/oauth/pkg/api/server/resource"
 	"github.com/task4233/oauth/pkg/infra"
 	authZUseCase "github.com/task4233/oauth/pkg/usecase/authorization"
 	"golang.org/x/oauth2"
@@ -18,6 +19,7 @@ const (
 	AppServerPort            = 9000
 	authorizationServerPort  = 9001
 	authenticationServerPort = 9002
+	resourceServerPort       = 9003
 )
 
 func main() {
@@ -27,6 +29,7 @@ func main() {
 	authZUC := authZUseCase.NewAuthUseCase(authStorage)
 	authZSV := authZServer.NewAuthorization(authZUC)
 	authNSV := authNServer.NewAuthentication()
+	resourceSV := resourceServer.NewResource()
 	appSV := client.NewApp(oauthConfig)
 
 	eg := &errgroup.Group{}
@@ -39,6 +42,9 @@ func main() {
 	})
 	eg.Go(func() error {
 		return authNSV.Run(authenticationServerPort)
+	})
+	eg.Go(func() error {
+		return resourceSV.Run(resourceServerPort)
 	})
 
 	if err := eg.Wait(); err != nil {

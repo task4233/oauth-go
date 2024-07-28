@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Authorization Code Flow</title>
+</head>
+
+<body>
+    <script>
+        const accessToken = localStorage.getItem("accessToken");
+        if (!accessToken) {
+            location.href = "/login";
+        }
+        fetch("http://localhost:9003/resource", {
+            method: "GET",
+            headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "cors": "no-cors",
+            },
+        }).then((response) => {
+            alert(response);
+            if (response.ok) {
+                return response.json();
+            }
+            throw new Error("Failed to fetch data from the API");
+        }).then((data) => {
+            const h1 = document.createElement("h1");
+            h1.textContent = `${data.message}!`;
+            document.body.appendChild(h1);
+        }).catch((error) => {
+            console.error(error);
+        });
+    </script>
+</body>
+
+</html>

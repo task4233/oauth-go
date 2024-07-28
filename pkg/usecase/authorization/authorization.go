@@ -62,7 +62,7 @@ func (s *AuthUseCase) Token(ctx context.Context, req *model.TokenRequest) (*mode
 		return nil, err
 	}
 
-	accessToken := model.NewAccessToken()
+	accessToken := model.NewAccessToken(authReq)
 	err = s.Storage.CreateAccessToken(ctx, accessToken)
 	if err != nil {
 		return nil, err
@@ -90,4 +90,28 @@ func (s *AuthUseCase) ValidateTokenRequest(ctx context.Context, req *model.Token
 	}
 
 	return authReq, client, nil
+}
+
+func (s *AuthUseCase) Introspect(ctx context.Context, token string, hint model.TokenType) (*model.Introspect, error) {
+	switch hint {
+	case model.TokenTypeAccessToken:
+		return s.introspectAccessToken(ctx, token)
+	default:
+		return nil, fmt.Errorf("unsupported token type")
+	}
+}
+
+func (s *AuthUseCase) introspectAccessToken(ctx context.Context, token string) (*model.Introspect, error) {
+	accessToken, err := s.Storage.GetAccessToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.Introspect{
+		Active:    true,
+		Scope:     accessToken.Scope,
+		ClientID:  "", // TODO: consider how to get client_id
+		TokenType: model.TokenTypeAccessToken,
+		Exp:       accessToken.ExpiresIn,
+	}, nil
 }

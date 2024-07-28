@@ -10,8 +10,13 @@ import (
 )
 
 var (
+	ErrAuthReqInvalid  = errors.New("authorization request is invalid")
 	ErrAuthReqNotFound = errors.New("authorization request not found")
-	ErrClientNotFound  = errors.New("client not found")
+
+	ErrAccessTokenInvalid = errors.New("access token is invalid")
+
+	ErrClientInvalid  = errors.New("client is invalid")
+	ErrClientNotFound = errors.New("client not found")
 )
 
 type AuthorizationStorage struct {
@@ -54,12 +59,20 @@ func (s *AuthorizationStorage) GetAuthorizationRequestByCode(ctx context.Context
 }
 
 func (s *AuthorizationStorage) CreateAuthorizationRequest(ctx context.Context, req *model.AuthRequest) (*model.AuthRequest, error) {
+	if req == nil {
+		return nil, ErrAuthReqInvalid
+	}
+
 	req.ID = uuid.NewString()
 	s.authReqKvs[req.ID] = req
 	return req, nil
 }
 
 func (s *AuthorizationStorage) GenerateAuthorizationCode(ctx context.Context, req *model.AuthRequest) (*model.AuthRequest, error) {
+	if req == nil {
+		return nil, ErrAuthReqInvalid
+	}
+
 	req.Code = uuid.NewString()
 	s.authReqKvs[req.ID] = req
 	return req, nil
@@ -76,8 +89,20 @@ func (s *AuthorizationStorage) DisableAuthorizationRequest(ctx context.Context, 
 }
 
 func (s *AuthorizationStorage) CreateAccessToken(ctx context.Context, token *model.AccessToken) error {
+	if token == nil {
+		return ErrAccessTokenInvalid
+	}
+
 	s.accessTokenKvs[token.AccessToken] = token
 	return nil
+}
+
+func (s *AuthorizationStorage) GetAccessToken(ctx context.Context, token string) (*model.AccessToken, error) {
+	v, ok := s.accessTokenKvs[token]
+	if !ok {
+		return nil, ErrAccessTokenInvalid
+	}
+	return v, nil
 }
 
 func (s *AuthorizationStorage) GetClient(ctx context.Context, clientID string) (model.Client, error) {

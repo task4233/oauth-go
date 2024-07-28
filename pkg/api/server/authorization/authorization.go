@@ -1,9 +1,7 @@
 package authorization
 
 import (
-	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/task4233/oauth/pkg/domain/model"
@@ -30,6 +28,7 @@ func (s *Authorization) Run(port int) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/authorize", s.Authorize)
 	mux.HandleFunc("/token", s.Token)
+	mux.HandleFunc("/introspect", s.Introspect)
 
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
 }
@@ -73,49 +72,8 @@ func (r *AuthorizationRequest) ToModel() *model.AuthRequest {
 
 // ref: http://openid-foundation-japan.github.io/rfc6749.ja.html#code-authz-resp
 type AuthorizationResponse struct {
-	Code  string // required
-	State string // recommended
-}
-
-// ref: http://openid-foundation-japan.github.io/rfc6749.ja.html#token-req
-type AccessTokenRequest struct {
-	GrantType   string // required
-	Code        string // required
-	RedirectURI string // required
-	ClientID    string // required
-}
-
-func (r *AccessTokenRequest) Validate() error {
-	if r.GrantType != "authorization_code" {
-		return fmt.Errorf("grant_type must be authorization_code")
-	}
-	if r.Code == "" {
-		return fmt.Errorf("code is required")
-	}
-	if r.RedirectURI == "" {
-		return fmt.Errorf("redirect_uri is required")
-	}
-	if r.ClientID == "" {
-		return fmt.Errorf("client_id is required")
-	}
-	return nil
-}
-
-func (r *AccessTokenRequest) ToModel() *model.TokenRequest {
-	return &model.TokenRequest{
-		Code:        r.Code,
-		RedirectURI: r.RedirectURI,
-		ClientID:    r.ClientID,
-	}
-}
-
-// ref: http://openid-foundation-japan.github.io/rfc6749.ja.html#token-response
-type AccessTokenResponse struct {
-	AccessToken  string // required
-	TokenType    string // required
-	ExpiresIn    int    // recommended
-	RefreshToken string // optional
-	Scope        string // optional
+	Code  string `form:"code"`  // required
+	State string `form:"state"` // recommended
 }
 
 func (s *Authorization) Authorize(w http.ResponseWriter, r *http.Request) {
@@ -167,53 +125,11 @@ func (s *Authorization) AuthResponseCode(w http.ResponseWriter, r *http.Request,
 		Code:  authReq.Code,
 		State: authReq.State,
 	}
-
 	callback := fmt.Sprintf("%s?code=%s", authReq.RedirectURI, res.Code)
 	if res.State != "" {
 		callback += "&state=" + res.State
 	}
 	http.Redirect(w, r, callback, http.StatusFound)
-}
-
-func (s *Authorization) Token(w http.ResponseWriter, r *http.Request) {
-	defer func() {
-
-		slog.Info("token response", slog.Any("response", w))
-	}()
-
-	req := s.ParseAccessTokenRequest(r)
-	err := req.Validate()
-	if err != nil {
-		RequestError(w, r, &ErrorResponse{
-			Error:       InvalidRequest,
-			Description: err.Error(),
-			ErrorURI:    req.RedirectURI,
-		})
-		return
-	}
-
-	slog.Info("token request", slog.Any("request", req))
-
-	accessToken, err := s.authUC.Token(r.Context(), req.ToModel())
-	if err != nil {
-		RequestError(w, r, &ErrorResponse{
-			Error:       ServerError,
-			Description: err.Error(),
-			ErrorURI:    req.RedirectURI,
-		})
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w).Encode(accessToken)
-	if err != nil {
-		RequestError(w, r, &ErrorResponse{
-			Error:       ServerError,
-			Description: err.Error(),
-			ErrorURI:    req.RedirectURI,
-		})
-		return
-	}
 }
 
 func (s *Authorization) ParseAuthorizeRequest(r *http.Request) *AuthorizationRequest {
@@ -224,16 +140,6 @@ func (s *Authorization) ParseAuthorizeRequest(r *http.Request) *AuthorizationReq
 	res.RedirectURI = r.FormValue("redirect_uri")
 	res.State = r.FormValue("state")
 	res.Client = r.URL.Query().Get("client")
-
-	return res
-}
-
-func (s *Authorization) ParseAccessTokenRequest(r *http.Request) *AccessTokenRequest {
-	res := &AccessTokenRequest{}
-	res.GrantType = r.FormValue("grant_type")
-	res.Code = r.FormValue("code")
-	res.RedirectURI = r.FormValue("redirect_uri")
-	res.ClientID = r.FormValue("client_id")
 
 	return res
 }

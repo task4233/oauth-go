@@ -3,8 +3,8 @@ package client
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"text/template"
 
@@ -12,8 +12,16 @@ import (
 	"golang.org/x/oauth2"
 )
 
-//go:embed templates/login.html.tmpl
-var loginTemplate string
+var (
+	//go:embed templates/index.html.tmpl
+	indexTemplate string
+
+	//go:embed templates/login.html.tmpl
+	loginTemplate string
+
+	//go:embed templates/callback.html.tmpl
+	callbackTemplate string
+)
 
 type App struct {
 	oauthConfig  *oauth2.Config
@@ -29,10 +37,15 @@ func NewApp(oauthConfig *oauth2.Config) *App {
 
 func (s *App) Run(port int) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.Index)
 	mux.HandleFunc("/login", s.Login)
 	mux.HandleFunc("/auth/callback", s.Callback)
 
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
+}
+
+func (s *App) Index(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte(indexTemplate))
 }
 
 func (s *App) Login(w http.ResponseWriter, r *http.Request) {
@@ -104,9 +117,16 @@ func (s *App) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = json.NewEncoder(w).Encode(tokens)
+	t, err := template.New("callback").Parse(callbackTemplate)
 	if err != nil {
-		http.Error(w, "failed to encode response: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = t.Execute(w, tokens.AccessToken)
+	if err != nil {
+		slog.Error("failed to execute template", slog.String("error", err.Error()))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
