@@ -21,6 +21,10 @@ func (s *Resource) Run(port int) error {
 }
 
 func (s *Resource) Resource(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization,cors")
+
 	switch r.Method {
 	case http.MethodGet:
 		s.ResourceGET(w, r)
@@ -37,7 +41,4 @@ func (s *Resource) ResourceGET(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Resource) ResourceOptions(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "*")
 }

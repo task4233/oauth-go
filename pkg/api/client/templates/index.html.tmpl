@@ -4,11 +4,15 @@
 <head>
     <meta charset="UTF-8">
     <title>Authorization Code Flow</title>
+    <form>
+        <button type="submit" id="logout-btn">Logout</button>
+    </form>
 </head>
 
 <body>
     <script>
         const accessToken = localStorage.getItem("accessToken");
+        const button = document.getElementById("logout-btn");
         if (!accessToken) {
             location.href = "/login";
         }
@@ -19,7 +23,6 @@
                 "cors": "no-cors",
             },
         }).then((response) => {
-            alert(response);
             if (response.ok) {
                 return response.json();
             }
@@ -30,6 +33,10 @@
             document.body.appendChild(h1);
         }).catch((error) => {
             console.error(error);
+        });
+        button.addEventListener("click", () => {
+            localStorage.removeItem("accessToken");
+            location.href = "/login";
         });
     </script>
 </body>
