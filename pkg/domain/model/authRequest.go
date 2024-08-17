@@ -14,7 +14,8 @@ type AuthRequest struct {
 }
 
 type TokenRequest struct {
-	Code        string
-	RedirectURI string
-	ClientID    string
+	Code         string
+	RedirectURI  string
+	ClientID     string
+	ClientSecret string
 }

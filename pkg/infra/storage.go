@@ -2,6 +2,7 @@ package infra
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"time"
 
@@ -25,17 +26,22 @@ type AuthorizationStorage struct {
 	clientKvs      map[string]model.Client
 }
 
-func NewAuthorizationStorage() *AuthorizationStorage {
+func NewAuthorizationStorage(clientSecretFixedKey string) *AuthorizationStorage {
+	clientSecret := "dummy-client-secret"
+	clientSecretHash := sha256.Sum256([]byte(clientSecret + clientSecretFixedKey))
+
 	return &AuthorizationStorage{
 		authReqKvs:     make(map[string]*model.AuthRequest),
 		accessTokenKvs: make(map[string]*model.AccessToken),
 		clientKvs: map[string]model.Client{
-			"dummy-client-id": &model.ConfidentialClient{
-				ID: "dummy-client-id",
-				RedirectURIs: []string{
+			"dummy-client-id": model.NewConfidentialClient(
+				model.AuthMethodBasic,
+				"dummy-client-id",
+				string(clientSecretHash[:]), // should be hashed with sha256
+				[]string{
 					"http://localhost:9000/auth/callback",
 				},
-			},
+			),
 		},
 	}
 }

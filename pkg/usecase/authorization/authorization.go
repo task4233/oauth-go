@@ -10,11 +10,16 @@ import (
 
 type AuthUseCase struct {
 	Storage repository.Storage
+	Hasher  repository.Hasher
 }
 
-func NewAuthUseCase(storage repository.Storage) *AuthUseCase {
+func NewAuthUseCase(storage repository.Storage, hasher repository.Hasher) *AuthUseCase {
+	if hasher == nil {
+		return nil
+	}
 	return &AuthUseCase{
 		Storage: storage,
+		Hasher:  hasher,
 	}
 }
 
@@ -77,6 +82,11 @@ func (s *AuthUseCase) ValidateTokenRequest(ctx context.Context, req *model.Token
 		return nil, nil, err
 	}
 
+	err = s.AuthenteClient(ctx, client, req)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	authReq, err := s.Storage.GetAuthorizationRequestByCode(ctx, req.Code)
 	if err != nil {
 		return nil, nil, fmt.Errorf("by code: %w", err)
@@ -85,11 +95,37 @@ func (s *AuthUseCase) ValidateTokenRequest(ctx context.Context, req *model.Token
 	if client.GetID() != authReq.ClientID {
 		return nil, nil, fmt.Errorf("client_id is mismatched")
 	}
+
 	if !client.IsValidRedirectURI(authReq.RedirectURI) {
 		return nil, nil, fmt.Errorf("redirect_uri is mismatched")
 	}
 
 	return authReq, client, nil
+}
+
+func (s *AuthUseCase) AuthenteClient(ctx context.Context, client model.Client, req *model.TokenRequest) error {
+	if client.IsPublic() {
+		return nil
+	}
+
+	switch client.GetAuthMethod() {
+	case model.AuthMethodBasic:
+		ok, err := s.getHasher().Compare(ctx, []byte(client.GetSecret()), []byte(req.ClientSecret))
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+
+		return fmt.Errorf("client_secret is invalid")
+	default:
+		return fmt.Errorf("unsupported auth method: %v", client.GetAuthMethod())
+	}
+}
+
+func (s *AuthUseCase) getHasher() repository.Hasher {
+	return s.Hasher
 }
 
 func (s *AuthUseCase) Introspect(ctx context.Context, token string, hint model.TokenType) (*model.Introspect, error) {

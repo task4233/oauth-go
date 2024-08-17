@@ -9,6 +9,7 @@ import (
 	authNServer "github.com/task4233/oauth/pkg/api/server/authentication"
 	authZServer "github.com/task4233/oauth/pkg/api/server/authorization"
 	resourceServer "github.com/task4233/oauth/pkg/api/server/resource"
+	"github.com/task4233/oauth/pkg/domain/service"
 	"github.com/task4233/oauth/pkg/infra"
 	authZUseCase "github.com/task4233/oauth/pkg/usecase/authorization"
 	"golang.org/x/oauth2"
@@ -25,8 +26,10 @@ const (
 func main() {
 	oauthConfig := setupOAuthConfig()
 
-	authStorage := infra.NewAuthorizationStorage()
-	authZUC := authZUseCase.NewAuthUseCase(authStorage)
+	fixedKey := os.Getenv("CLIENT_SECRET_FIXED_KEY")
+
+	authStorage := infra.NewAuthorizationStorage(fixedKey)
+	authZUC := authZUseCase.NewAuthUseCase(authStorage, service.NewSha256Hasher(fixedKey))
 	authZSV := authZServer.NewAuthorization(authZUC)
 	authNSV := authNServer.NewAuthentication()
 	resourceSV := resourceServer.NewResource()

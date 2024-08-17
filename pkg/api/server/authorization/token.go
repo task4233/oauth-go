@@ -10,10 +10,11 @@ import (
 
 // ref: http://openid-foundation-japan.github.io/rfc6749.ja.html#token-req
 type AccessTokenRequest struct {
-	GrantType   string // required
-	Code        string // required
-	RedirectURI string // required
-	ClientID    string // required
+	GrantType    string // required
+	Code         string // required
+	RedirectURI  string // required
+	ClientID     string // required
+	ClientSecret string // optional
 }
 
 func (r *AccessTokenRequest) Validate() error {
@@ -29,14 +30,16 @@ func (r *AccessTokenRequest) Validate() error {
 	if r.ClientID == "" {
 		return fmt.Errorf("client_id is required")
 	}
+
 	return nil
 }
 
 func (r *AccessTokenRequest) ToModel() *model.TokenRequest {
 	return &model.TokenRequest{
-		Code:        r.Code,
-		RedirectURI: r.RedirectURI,
-		ClientID:    r.ClientID,
+		Code:         r.Code,
+		RedirectURI:  r.RedirectURI,
+		ClientID:     r.ClientID,
+		ClientSecret: r.ClientSecret,
 	}
 }
 
@@ -96,11 +99,20 @@ func (s *Authorization) TokenResponse(w http.ResponseWriter, r *http.Request, re
 }
 
 func (s *Authorization) ParseAccessTokenRequest(r *http.Request) *AccessTokenRequest {
-	res := &AccessTokenRequest{}
-	res.GrantType = r.FormValue("grant_type")
-	res.Code = r.FormValue("code")
-	res.RedirectURI = r.FormValue("redirect_uri")
-	res.ClientID = r.FormValue("client_id")
+	req := &AccessTokenRequest{}
+	req.GrantType = r.FormValue("grant_type")
+	req.Code = r.FormValue("code")
+	req.RedirectURI = r.FormValue("redirect_uri")
 
-	return res
+	clientID, clientSecret, ok := r.BasicAuth()
+	if ok {
+		req.ClientID = clientID
+		req.ClientSecret = clientSecret
+	} else {
+		// ref: https://datatracker.ietf.org/doc/html/rfc6749#section-2.3.1
+		req.ClientID = r.FormValue("client_id")
+		req.ClientSecret = r.FormValue("client_secret")
+	}
+
+	return req
 }

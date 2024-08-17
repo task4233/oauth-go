@@ -22,3 +22,8 @@ type AuthorizationStorage interface {
 
 	GetClient(context.Context, string) (model.Client, error)
 }
+
+type Hasher interface {
+	Compare(ctx context.Context, hash, data []byte) (bool, error)
+	Hash(ctx context.Context, data []byte) ([]byte, error)
+}

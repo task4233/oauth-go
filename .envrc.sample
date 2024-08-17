@@ -1,2 +1,3 @@
 export CLIENT_ID="dummy-client-id"
 export CLIENT_SECRET="dummy-client-secret"
+export CLIENT_SECRET_FIXED_KEY="dummy-client-secret-fixed-key"
