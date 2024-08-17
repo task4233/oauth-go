@@ -3,7 +3,22 @@ oauth-go-sample is a repository for understanding the OAuth 2.0(2.1) defined in 
 
 This repository contains the following implementations:
 - [x] Authorization Code Flow
-- [ ] Token Introspection
+- [x] Token Introspection
+- [ ] Client Authentication
+  - [x] `client_secret_basic`
+
+## Test
+
+```bash
+make test
+```
+
+## Server
+
+```bash
+make server/run &
+open http://localhost:9000
+```
 
 ## References
 - [The OAuth 2.0 Authorization Framework](https://datatracker.ietf.org/doc/html/rfc6749)
